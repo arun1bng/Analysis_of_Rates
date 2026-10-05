@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+.cell-flex-wrapper {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+.cell-flex-wrapper input.qty-text-input {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  background: transparent;
+  border: 1px solid #555;
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.far-right-badge {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.my-cell-layout {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.my-cell-input {
+  flex: 1;
+  min-width: 60px;
+  margin-right: 12px;
+}
+.my-far-right-stepper {
+  margin-left: auto;
+  white-space: nowrap;
+}

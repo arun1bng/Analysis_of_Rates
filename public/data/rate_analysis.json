@@ -1,0 +1,9 @@
+{
+  "4.1.1": [
+    { "type": "material", "name": "Cement", "unit": "bag", "coefficient": 6.4, "base_rate": 350 },
+    { "type": "material", "name": "Coarse sand", "unit": "cum", "coefficient": 0.45, "base_rate": 2200 },
+    { "type": "material", "name": "Graded stone aggregate", "unit": "cum", "coefficient": 0.91, "base_rate": 1800 },
+    { "type": "labor", "name": "Mason (Skilled)", "unit": "day", "coefficient": 0.5, "base_rate": 800 },
+    { "type": "labor", "name": "Beldar (Unskilled)", "unit": "day", "coefficient": 3.0, "base_rate": 600 }
+  ]
+}
