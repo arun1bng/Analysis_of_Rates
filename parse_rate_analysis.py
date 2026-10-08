@@ -75,6 +75,13 @@ def is_main_item_code(code):
     )
 
 
+def is_valid_component_code(code):
+    return bool(
+        re.fullmatch(r"\d{4}", code)
+        or re.fullmatch(r"\d+[A-Za-z]*(?:\.[A-Za-z0-9()]+)+", code)
+    )
+
+
 def parse_rate_analysis(filepath, output_file=None):
     print(f"Reading Rate Analysis from {filepath}...")
     try:
@@ -138,8 +145,18 @@ def parse_rate_analysis(filepath, output_file=None):
                 if current_item.startswith("3.") and any(x in desc_val.lower() for x in ["water charges", "cpoh", "gst", "cess"]): continue
                 if current_item == "5.9.3" and re.fullmatch(r"detail of cost\s+for\s+10 room", desc_val, re.IGNORECASE):
                     desc_val = "Detail of cost for 135 sqm"
-                marker = cols[6].strip().upper()
                 row_amount = parse_number(cols[5])
+                has_component_values = bool(cols[3].strip() or cols[4].strip() or row_amount is not None)
+                is_calculation_line = bool(
+                    re.match(
+                        r"^(?:details?\s+of\s+cost|total\b|cost\s+(?:of|for|per)\b|rate\s+per\b|say\b|add\b)",
+                        desc_val,
+                        re.IGNORECASE,
+                    )
+                )
+                if has_component_values and not is_valid_component_code(c_code) and not is_calculation_line:
+                    continue
+                marker = cols[6].strip().upper()
                 percentage_of_p = PERCENT_OF_P_RE.search(desc_val)
                 if marker == "P" and row_amount is not None:
                     current_p_value = row_amount
@@ -150,6 +167,8 @@ def parse_rate_analysis(filepath, output_file=None):
                 current_analysis.append({ "code": code_val, "description": desc_val, "unit": cols[2], "quantity": cols[3], "rate": cols[4], "amount": cols[5], "mark": cols[6] })
 
         save_current_item()
+
+    workbook.close()
 
     output_path = Path(output_file) if output_file else Path(__file__).resolve().parent / "public" / "data" / "rate_analysis_master.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)

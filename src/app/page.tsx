@@ -6,8 +6,8 @@ import Decimal from "decimal.js";
 interface DsrItem { code: string; description: string; fullDescription?: string; unit: string; rate: number | null; rateDR?: number | null; isMain?: boolean; isDeleted?: boolean; }
 interface SubHeadGroup { label: string; items: DsrItem[]; }
 interface MeasurementRow { id: string; slNo: number; itemCode: string; description: string; locationDesc: string; unit: string; rate: number; nos: number | ""; num1: number | ""; num2: number | ""; length: number | ""; breadth: number | ""; height: number | ""; coefficient: number | ""; quantity: number; amount: number; referenceItemCode?: string; percentageVal?: number | ""; }
-interface RateAnalysisRow { code?: string; description?: string; unit?: string; quantity?: string | number; rate?: string | number; amount?: string | number; mark?: string; }
-interface RateAnalysis { code?: string; description?: string; unit?: string; analysis?: RateAnalysisRow[]; basisDescriptions?: string[]; databaseBasis?: string | number | null; databaseUnit?: string | null; }
+interface RateAnalysisRow { code?: string; description?: string; unit?: string; quantity?: string | number; rate?: string | number; amount?: string | number; mark?: string; source_text?: string | null; }
+interface RateAnalysis { code?: string; description?: string; unit?: string; analysis?: RateAnalysisRow[]; basisDescriptions?: string[]; databaseBasis?: string | number | null; databaseUnit?: string | null; source_text?: string | null; }
 interface DatabaseRateAnalysisComponent {
   component_code: string | null;
   component_type: string;
@@ -19,12 +19,12 @@ interface DatabaseRateAnalysisComponent {
   reference_item_code: string | null;
   reference_analysis_code: string | null;
   analysis_code?: string;
+  source_text?: string | null;
 }
-interface DatabaseDarItem { item_code: string; description: string; unit: string | null; rate_basis: string | number | null; }
-interface DatabaseSubAnalysis { analysis_code: string; description: string | null; unit: string | null; quantity_basis: string | number | null; }
+interface DatabaseDarItem { item_code: string; description: string; unit: string | null; rate_basis: string | number | null; source_text?: string | null; }
+interface DatabaseSubAnalysis { analysis_code: string; description: string | null; unit: string | null; quantity_basis: string | number | null; source_text?: string | null; }
 interface DatabaseAnalysisEntry {
   darItem: DatabaseDarItem | null;
-  sourceItemCode: string;
   components: DatabaseRateAnalysisComponent[];
   subAnalysis: DatabaseSubAnalysis | null;
   subComponents: DatabaseRateAnalysisComponent[];
@@ -35,6 +35,8 @@ interface DatabaseAnalysisResponse {
   allSubComponents: (DatabaseRateAnalysisComponent & { analysis_code: string })[];
 }
 interface ComputedRateAnalysis { rate: number; baseQuantity: number; unit: string; block: RateAnalysisRow[]; }
+type RateAnalysisSource = "legacy" | "database";
+interface ArModalEntry { code: string; source: RateAnalysisSource; }
 interface AbstractPathNode { slNo: string; itemCode: string; itemCodeForOverride?: string; description: string; isParentRow: boolean; unit?: string; rate?: number; subtotalQty?: number; finalGroupQty?: number; rows?: MeasurementRow[]; hasRate: boolean; }
 interface AbstractSummaryItem { itemCode: string; treeSlNo: string; description: string; isParentRow: boolean; unit: string; totalQty: number; rate: number; rateDAR: number | null; amount: number; hasRate: boolean; }
 interface JustificationMaterial { id: string; code: string; description: string; unit: string; dsrRate: number; group: string; isCarriage?: boolean; }
@@ -95,6 +97,7 @@ function isRateAnalysis(value: unknown): value is RateAnalysis {
     (value.code === undefined || typeof value.code === "string") &&
     (value.description === undefined || typeof value.description === "string") &&
     (value.unit === undefined || typeof value.unit === "string") &&
+    (value.source_text === undefined || value.source_text === null || typeof value.source_text === "string") &&
     (value.basisDescriptions === undefined || (Array.isArray(value.basisDescriptions) && value.basisDescriptions.every((description) => typeof description === "string"))) &&
     (value.analysis === undefined || (Array.isArray(value.analysis) && value.analysis.every((row) =>
       isRecord(row) &&
@@ -104,16 +107,61 @@ function isRateAnalysis(value: unknown): value is RateAnalysis {
       (row.mark === undefined || typeof row.mark === "string") &&
       (row.quantity === undefined || typeof row.quantity === "string" || typeof row.quantity === "number") &&
       (row.rate === undefined || typeof row.rate === "string" || typeof row.rate === "number") &&
-      (row.amount === undefined || typeof row.amount === "string" || typeof row.amount === "number"),
+      (row.amount === undefined || typeof row.amount === "string" || typeof row.amount === "number") &&
+      (row.source_text === undefined || row.source_text === null || typeof row.source_text === "string"),
     )));
 }
 
-function getBasisDescriptions(analysis: RateAnalysis | undefined) {
-  return (analysis?.analysis || [])
-    .map((row) => String(row.description || ""))
-    .filter((description) =>
-      /^\s*Cost\s+(?:of|for)\s+[\d.]+/i.test(description) ||
-      /Details?\s+of\s+cost/i.test(description),
+function isDatabaseRateAnalysisComponent(value: unknown): value is DatabaseRateAnalysisComponent {
+  return isRecord(value) &&
+    (value.component_code === null || typeof value.component_code === "string") &&
+    typeof value.component_type === "string" &&
+    (value.description === null || typeof value.description === "string") &&
+    (value.unit === null || typeof value.unit === "string") &&
+    (value.quantity === null || typeof value.quantity === "number") &&
+    (value.rate === null || typeof value.rate === "number") &&
+    (value.amount === null || typeof value.amount === "number") &&
+    (value.reference_item_code === null || typeof value.reference_item_code === "string") &&
+    (value.reference_analysis_code === null || typeof value.reference_analysis_code === "string") &&
+    (value.analysis_code === undefined || typeof value.analysis_code === "string") &&
+    (value.source_text === undefined || value.source_text === null || typeof value.source_text === "string");
+}
+
+function isDatabaseDarItem(value: unknown): value is DatabaseDarItem {
+  return isRecord(value) &&
+    typeof value.item_code === "string" &&
+    typeof value.description === "string" &&
+    (value.unit === null || typeof value.unit === "string") &&
+    (value.rate_basis === null || typeof value.rate_basis === "string" || typeof value.rate_basis === "number") &&
+    (value.source_text === undefined || value.source_text === null || typeof value.source_text === "string");
+}
+
+function isDatabaseSubAnalysis(value: unknown): value is DatabaseSubAnalysis {
+  return isRecord(value) &&
+    typeof value.analysis_code === "string" &&
+    (value.description === null || typeof value.description === "string") &&
+    (value.unit === null || typeof value.unit === "string") &&
+    (value.quantity_basis === null || typeof value.quantity_basis === "string" || typeof value.quantity_basis === "number") &&
+    (value.source_text === undefined || value.source_text === null || typeof value.source_text === "string");
+}
+
+function isDatabaseAnalysisResponse(value: unknown): value is DatabaseAnalysisResponse {
+  return isRecord(value) &&
+    isRecord(value.analyses) &&
+    Object.values(value.analyses).every((entry) =>
+      isRecord(entry) &&
+      (entry.darItem === null || isDatabaseDarItem(entry.darItem)) &&
+      Array.isArray(entry.components) &&
+      entry.components.every(isDatabaseRateAnalysisComponent) &&
+      (entry.subAnalysis === null || isDatabaseSubAnalysis(entry.subAnalysis)) &&
+      Array.isArray(entry.subComponents) &&
+      entry.subComponents.every(isDatabaseRateAnalysisComponent),
+    ) &&
+    Array.isArray(value.allSubAnalyses) &&
+    value.allSubAnalyses.every(isDatabaseSubAnalysis) &&
+    Array.isArray(value.allSubComponents) &&
+    value.allSubComponents.every((component) =>
+      isDatabaseRateAnalysisComponent(component) && typeof component.analysis_code === "string",
     );
 }
 
@@ -141,26 +189,66 @@ const DSR_CHAPTER_NAMES: Record<string, string> = { "sh_1": "SH 1: CARRIAGE OF M
 const ALPHA_NUM_REGEX = new RegExp("^(\\d+)(.*)$");
 const SUB_AR_REGEX = new RegExp("Sub[\\s\\-_]*A/?R[\\s\\-_]*\\d+[A-Z]?", "i");
 const ITEM_CODE_REGEX = new RegExp("^(\\d+[a-zA-Z]*)(\\.[a-zA-Z0-9()]+)+$");
+const BASIC_RATE_CODE_REGEX = /^\d{4}$/;
+
+function isValidRateAnalysisComponentCode(code: string | undefined) {
+  const normalizedCode = String(code || "").trim();
+  return BASIC_RATE_CODE_REGEX.test(normalizedCode) || ITEM_CODE_REGEX.test(normalizedCode);
+}
+
+function getDetailsOfCostHeader(analysis: RateAnalysis | undefined) {
+  if (analysis?.source_text) {
+    const exactMatch = analysis.source_text.match(/(Details\s+of\s+cost\s+(?:for\s+)?[\d.]+\s+[a-zA-Z]+)/i);
+    if (exactMatch) return exactMatch[1].trim();
+  }
+  const sourceTexts = [
+    ...(analysis?.basisDescriptions || []),
+    String(analysis?.source_text || ""),
+    ...(analysis?.analysis || []).flatMap((row) => [
+      String(row.description || ""),
+      String(row.source_text || ""),
+    ]),
+  ];
+  for (const sourceText of sourceTexts) {
+    const match = sourceText.match(/Details\s+of\s+cost\s+(?:for\s+)?[\d.]+(?:\s+[a-z][a-z0-9/^.-]*)?/i);
+    if (match) return match[0].trim().replace(/[.,;:]+$/, "");
+  }
+  return "";
+}
+
+function getLegacyCalculationRows(rows: RateAnalysisRow[]) {
+  const validRowRegex = /^(\d{4}|\d+\.\d+(\.\d+)*)\b/;
+  return rows.filter((row) => {
+    if (row.code && validRowRegex.test(row.code.trim())) return true;
+    const description = String(row.description || "").trim();
+    const isCalculationLine = /^(?:details?\s+of\s+cost|total\b|cost\s+(?:of|for|per)\b|rate\s+per\b|say\b|add\b)/i.test(description);
+    return isCalculationLine;
+  });
+}
+
 
 function getRateAnalysisBasis(analysis: RateAnalysis) {
+  const descriptions = [
+    ...(analysis.basisDescriptions || []),
+    String(analysis.source_text || ""),
+    String(analysis.description || ""),
+    ...(analysis.analysis || []).map((row) => String(row.description || "")),
+    ...(analysis.analysis || []).map((row) => String(row.source_text || "")),
+  ];
+  const headerMatch = descriptions
+    .map((description) => description.match(/Details\s+of\s+cost\s+(?:for\s+)?([\d\.]+)/i))
+    .find((match) => match !== null);
+  const headerBasis = Number(headerMatch?.[1]);
+  if (Number.isFinite(headerBasis) && headerBasis > 0) return headerBasis;
+
   const databaseBasis = Number.parseFloat(String(analysis.databaseBasis ?? ""));
   if (Number.isFinite(databaseBasis) && databaseBasis > 0) return databaseBasis;
 
-  const descriptions = [
-    ...(analysis.basisDescriptions || []),
-    ...(analysis.analysis || []).map((row) => String(row.description || "")),
-  ];
   const footerMatch = descriptions
     .map((description) => description.match(/Cost\s+(?:of|for)\s+([\d.]+)/i))
     .find((match) => match !== null);
   const footerBasis = Number(footerMatch?.[1]);
   if (Number.isFinite(footerBasis) && footerBasis > 0) return footerBasis;
-
-  const headerMatch = descriptions
-    .map((description) => description.match(/Details\s+of\s+cost\s+for\s+([\d.]+)/i))
-    .find((match) => match !== null);
-  const headerBasis = Number(headerMatch?.[1]);
-  if (Number.isFinite(headerBasis) && headerBasis > 0) return headerBasis;
   return 1;
 }
 /* --- HELPERS --- */
@@ -356,9 +444,12 @@ export default function DsrEstimatorApp() {
   
   const [catalog, setCatalog] = useState<Record<string, SubHeadGroup>>({});
   const [rateAnalysisData, setRateAnalysisData] = useState<Record<string, RateAnalysis>>({});
+  const [databaseRateAnalysisData, setDatabaseRateAnalysisData] = useState<Record<string, RateAnalysis>>({});
   const [materialDb, setMaterialDb] = useState<Record<string, { desc: string, unit: string, rate: number }>>({});
   const [basicRateData, setBasicRateData] = useState<{ code: string; category: string; description: string; unit: string | null; rate: number | null }[]>([]);
-  const [computedDarRates, setComputedDarRates] = useState<Record<string, number | null>>({});
+  const [computedDrRates, setComputedDrRates] = useState<Record<string, number | null>>({});
+  const [computedDbRates, setComputedDbRates] = useState<Record<string, number | null>>({});
+  const [isCalculatingAllArs, setIsCalculatingAllArs] = useState(false);
   const [rateAnalysisLoading, setRateAnalysisLoading] = useState<boolean>(true);
   const [customNsrs, setCustomNsrs] = useState<DsrItem[]>([]);
   const rateAuditWarnings = useRef(new Set<string>());
@@ -375,7 +466,7 @@ export default function DsrEstimatorApp() {
   const [estimateRows, setEstimateRows] = useState<MeasurementRow[]>([]);
   const [copiedRows, setCopiedRows] = useState<MeasurementRow[]>([]); 
   
-  const [arModalStack, setArModalStack] = useState<string[]>([]);
+  const [arModalStack, setArModalStack] = useState<ArModalEntry[]>([]);
   const [wrapDescriptions, setWrapDescriptions] = useState<boolean>(true);
   const [showSelectedSidebar, setShowSelectedSidebar] = useState<boolean>(true);
   const [globalMissingRa, setGlobalMissingRa] = useState<string[]>([]);
@@ -405,19 +496,21 @@ export default function DsrEstimatorApp() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const getRAData = (code: string) => {
-      if (!code) return null; const norm = normalizeCode(code); if (rateAnalysisData[norm]) return rateAnalysisData[norm];
+  const getRAData = (code: string, source: RateAnalysisSource = "legacy") => {
+      const analysisData = source === "database" ? databaseRateAnalysisData : rateAnalysisData;
+      if (!code) return null; const norm = normalizeCode(code); if (analysisData[norm]) return analysisData[norm];
       const stripped = norm.replace(/[^A-Z0-9]/g, '');
-      const foundKey = Object.keys(rateAnalysisData).find(k => k.replace(/[^A-Z0-9]/g, '') === stripped);
-      return foundKey ? rateAnalysisData[foundKey] : null;
+      const foundKey = Object.keys(analysisData).find(k => k.replace(/[^A-Z0-9]/g, '') === stripped);
+      return foundKey ? analysisData[foundKey] : null;
   };
 
-  const resolveNestedAnalysisCode = (row: RateAnalysisRow) => {
+  const resolveNestedAnalysisCode = (row: RateAnalysisRow, source: RateAnalysisSource = "legacy") => {
+      const analysisData = source === "database" ? databaseRateAnalysisData : rateAnalysisData;
       const rowText = `${row.description || ""} ${row.code || ""}`;
       const subArMatch = rowText.match(SUB_AR_REGEX);
       if (subArMatch) {
         const alias = normalizeCode(subArMatch[0]).replace(/[^A-Z0-9]/g, "");
-        const candidates = Object.keys(rateAnalysisData).filter(key => normalizeCode(key).replace(/[^A-Z0-9]/g, "").startsWith(alias));
+        const candidates = Object.keys(analysisData).filter(key => normalizeCode(key).replace(/[^A-Z0-9]/g, "").startsWith(alias));
         const refMatch = rowText.match(/(?:REFERENCE|REF)\s*ITEM(?:\s*NO\.?)?\s*([0-9]+(?:\.[0-9]+)*)/i);
         if (refMatch) {
           const reference = normalizeCode(refMatch[1]).replace(/[^A-Z0-9]/g, "");
@@ -430,7 +523,7 @@ export default function DsrEstimatorApp() {
         const exactKey = candidates.find(key => normalizeCode(key).replace(/[^A-Z0-9]/g, "") === alias);
         return exactKey || (candidates.length === 1 ? candidates[0] : "");
       }
-      if (row.code && ITEM_CODE_REGEX.test(row.code.trim())) return normalizeCode(row.code);
+      if (row.code && isValidRateAnalysisComponentCode(row.code)) return normalizeCode(row.code);
       if (row.mark === "A") {
         const itemCode = rowText.match(/\d+[a-zA-Z]*(?:\.[a-zA-Z0-9()]+)+/);
         if (itemCode) return normalizeCode(itemCode[0]);
@@ -493,17 +586,23 @@ export default function DsrEstimatorApp() {
      return { finalGrandTotal: currentTotal, raBlock };
   };
 
-  const getComputedRA = (targetCode: string, isMarket: boolean, cache: Record<string, ComputedRateAnalysis> = {}) => {
+  const getComputedRA = (
+    targetCode: string,
+    isMarket: boolean,
+    cache: Record<string, ComputedRateAnalysis> = {},
+    source: RateAnalysisSource = "legacy",
+  ) => {
       const inProgress = new Set<string>();
       const compute = (code: string) => {
           const normalizedCode = normalizeCode(code);
+          const useMarketRates = isMarket && source === "legacy";
           if (cache[normalizedCode]) return cache[normalizedCode];
           if (inProgress.has(normalizedCode)) throw new Error(`Cyclic rate-analysis reference detected for item ${normalizedCode}.`);
-          const orig = getRAData(normalizedCode);
+          const orig = getRAData(normalizedCode, source);
           if (!orig || !orig.analysis) {
-            const rate = isMarket && marketRates[normalizedCode] !== undefined
-              ? marketRates[normalizedCode]
-              : (findCatalogItemByCodeGlobal(catalog, customNsrs, normalizedCode)?.rate || 0);
+            const rate = useMarketRates
+              ? (marketRates[normalizedCode] ?? findCatalogItemByCodeGlobal(catalog, customNsrs, normalizedCode)?.rate ?? 0)
+              : 0;
             cache[normalizedCode] = { rate, baseQuantity: 1, unit: "unit", block: [] };
             return cache[normalizedCode];
           }
@@ -511,24 +610,35 @@ export default function DsrEstimatorApp() {
           try {
           let sum = 0; let sumA = 0; const baseRows: RateAnalysisRow[] = [];
           const marks: RateAnalysisMarks = {};
-          let stopIdx = orig.analysis.findIndex((r: RateAnalysisRow) => { const d = (r.description || "").toLowerCase(); return d.includes("total materials & labour") || d.includes("total material") || r.mark === "W"; });
-          if (stopIdx === -1) stopIdx = orig.analysis.length; 
+          const calculationRows = source === "legacy"
+            ? getLegacyCalculationRows(orig.analysis)
+            : orig.analysis;
+          const detailsHeader = getDetailsOfCostHeader(orig);
+          if (detailsHeader) {
+            baseRows.push({ code: "", description: detailsHeader, unit: "", quantity: "", rate: "", amount: "", mark: "" });
+          }
+          let stopIdx = calculationRows.findIndex((r: RateAnalysisRow) => { const d = (r.description || "").toLowerCase(); return d.includes("total materials & labour") || d.includes("total material") || r.mark === "W"; });
+          if (stopIdx === -1) stopIdx = calculationRows.length;
+          else stopIdx = Math.min(stopIdx, calculationRows.length);
           for (let i = 0; i < stopIdx; i++) {
-              const r: RateAnalysisRow = orig.analysis[i]; const desc = (r.description || "").trim().toLowerCase();
+              const r: RateAnalysisRow = calculationRows[i]; const desc = (r.description || "").trim().toLowerCase();
+              if (/^details?\s+of\s+cost\b/i.test(desc)) continue;
               if (desc === "total" || /^(?:cost\s+(?:of|for|per)|rate\s+per|say)\b/.test(desc)) continue;
               if (!r.code && (!r.rate || r.rate === "") && (r.amount === "" || r.amount === null || r.amount === undefined) && !extractMarkExpression(String(r.description || "")) && !/\badd\s+\d+(?:\.\d+)?\s*(?:%|per\s*cent|percent)/i.test(String(r.description || ""))) { baseRows.push({ ...r, rate: "", amount: "" }); continue; }
               const c = String(r.code || "").trim(); let mRate = parseFloat(String(r.rate || "").replace(/,/g, "")) || 0;
-              const analysisCode = resolveNestedAnalysisCode(r);
-              const nestedAnalysis = analysisCode ? getRAData(analysisCode) : null;
+              const analysisCode = resolveNestedAnalysisCode(r, source);
+              const nestedAnalysis = analysisCode ? getRAData(analysisCode, source) : null;
               const numericCode = normalizeCode(c);
               const materialCode = /^\d+$/.test(numericCode) ? numericCode.replace(/^0+(?=\d)/, "") : numericCode;
-              const mappedMaterial = materialDb[numericCode]
-                || materialDb[materialCode]
-                || (/^\d+$/.test(numericCode) ? materialDb[numericCode.padStart(4, "0")] : undefined);
+              const mappedMaterial = useMarketRates
+                ? materialDb[numericCode]
+                  || materialDb[materialCode]
+                  || (/^\d+$/.test(numericCode) ? materialDb[numericCode.padStart(4, "0")] : undefined)
+                : undefined;
               const localRateText = String(r.rate ?? "").replace(/,/g, "").trim();
               const hasExplicitArRate = localRateText !== "" && Number.isFinite(Number(localRateText));
               const localArRate = hasExplicitArRate ? Number(localRateText) : 0;
-              if (isMarket) {
+              if (useMarketRates) {
                   if (nestedAnalysis?.analysis?.length) { mRate = compute(analysisCode).rate; }
                   else if (numericCode && marketRates[numericCode] !== undefined) { mRate = marketRates[numericCode]; }
                   else if (["9999", "9988", "9977"].includes(numericCode)) { const id = `${numericCode}_${String(r.description || "").trim()}`; if (marketRates[id] !== undefined) mRate = marketRates[id]; else if (hasExplicitArRate) mRate = localArRate; else if (mappedMaterial) mRate = mappedMaterial.rate; }
@@ -538,7 +648,6 @@ export default function DsrEstimatorApp() {
               } else {
                   if (hasExplicitArRate) { mRate = localArRate; }
                   else if (nestedAnalysis?.analysis?.length) { mRate = compute(analysisCode).rate; }
-                  else if (mappedMaterial) { mRate = mappedMaterial.rate; }
               }
               const qty = parseFloat(String(r.quantity ?? "").replace(/,/g, "")) || 0;
               let rowMark = String(r.mark || "").trim().toUpperCase();
@@ -568,10 +677,10 @@ export default function DsrEstimatorApp() {
               }
               baseRows.push({ ...r, rate: hasExplicitArRate || mRate > 0 ? mRate.toFixed(2) : "", amount: hasAmount ? amt.toFixed(2) : "", mark: rowMark });
           }
-          const totals = buildAddonBlock(sum, sumA, isMarket ? marketRaFormat : "conventional", isMarket ? marketRaAddons : DEFAULT_ADDONS, code, marks, orig.analysis);
+          const totals = buildAddonBlock(sum, sumA, useMarketRates ? marketRaFormat : "conventional", useMarketRates ? marketRaAddons : DEFAULT_ADDONS, code, marks, calculationRows);
           const baseQty = getRateAnalysisBasis(orig);
           const catItem = findCatalogItemByCodeGlobal(catalog, customNsrs, code);
-          const unit = orig.unit || catItem?.unit || "unit";
+          const unit = orig.unit || (source === "legacy" ? catItem?.unit : undefined) || "unit";
           const finalRateRaw = totals.finalGrandTotal / baseQty;
           const displayRateLabel = `Rate per 1 ${unit}`;
           totals.raBlock.push({ code: "", description: `Cost for ${baseQty} ${unit}`, unit: "", quantity: "", rate: "", amount: totals.finalGrandTotal.toFixed(2), mark: "" });
@@ -583,6 +692,20 @@ export default function DsrEstimatorApp() {
           }
       };
       return compute(targetCode);
+  };
+
+  const calculateRateDR = (item: DsrItem, cache: Record<string, ComputedRateAnalysis> = {}) => {
+    const analysis = getRAData(item.code, "legacy");
+    return analysis?.analysis?.length
+      ? getComputedRA(item.code, false, cache, "legacy")
+      : null;
+  };
+
+  const calculateRateDB = (item: DsrItem, cache: Record<string, ComputedRateAnalysis> = {}) => {
+    const analysis = getRAData(item.code, "database");
+    return analysis?.analysis?.length
+      ? getComputedRA(item.code, false, cache, "database")
+      : null;
   };
 
   const parentItemSet = useMemo(() => {
@@ -834,7 +957,7 @@ export default function DsrEstimatorApp() {
             .map((item) => normalizeCode(item.code))
             .filter((code) => code && !code.startsWith("50.") && !code.startsWith("51.")),
         ));
-        const [databaseResponse, legacyResponse] = await Promise.all([
+        const [databaseFetch, legacyFetch] = await Promise.allSettled([
           fetch("/api/rate-analysis", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -842,15 +965,40 @@ export default function DsrEstimatorApp() {
           }),
           fetch("/data/rate_analysis_master.json"),
         ]);
-        if (!databaseResponse.ok) throw new Error(`Rate analysis database request failed (${databaseResponse.status}).`);
-        if (!legacyResponse.ok) throw new Error(`Legacy rate analysis request failed (${legacyResponse.status}).`);
-        const databaseData = await databaseResponse.json() as DatabaseAnalysisResponse;
-        const legacyData: unknown = await legacyResponse.json();
-        if (!isRecord(legacyData)) throw new Error("Rate analysis JSON must contain an item-code map.");
+        let databaseData: DatabaseAnalysisResponse = { analyses: {}, allSubAnalyses: [], allSubComponents: [] };
+        if (databaseFetch.status === "rejected") {
+          console.error("Could not load database rate analyses:", databaseFetch.reason);
+        } else {
+          try {
+            if (!databaseFetch.value.ok) throw new Error(`Rate analysis database request failed (${databaseFetch.value.status}).`);
+            const responseData: unknown = await databaseFetch.value.json();
+            if (!isDatabaseAnalysisResponse(responseData)) {
+              throw new Error("Rate analysis database response has an invalid shape.");
+            }
+            databaseData = responseData;
+          } catch (error) {
+            console.error("Could not load database rate analyses:", error);
+          }
+        }
+        let legacyData: Record<string, unknown> = {};
+        if (legacyFetch.status === "rejected") {
+          console.error("Could not load legacy rate analyses:", legacyFetch.reason);
+        } else {
+          try {
+            if (!legacyFetch.value.ok) throw new Error(`Legacy rate analysis request failed (${legacyFetch.value.status}).`);
+            const responseData: unknown = await legacyFetch.value.json();
+            if (!isRecord(responseData)) throw new Error("Rate analysis JSON must contain an item-code map.");
+            legacyData = responseData;
+          } catch (error) {
+            console.error("Could not load legacy rate analyses:", error);
+            legacyData = {};
+          }
+        }
         const normalizedRa: Record<string, RateAnalysis> = {};
         Object.entries(legacyData).forEach(([analysisCode, value]) => {
           if (!isRateAnalysis(value)) {
-            throw new Error(`Invalid rate-analysis JSON record for item ${analysisCode}.`);
+            console.error(`Invalid legacy rate-analysis JSON record for item ${analysisCode}.`);
+            return;
           }
           const legacyAnalysis = value;
           const normalizedCode = normalizeCode(analysisCode);
@@ -858,15 +1006,14 @@ export default function DsrEstimatorApp() {
         });
         const allDatabaseComponents = new Map<string, DatabaseRateAnalysisComponent[]>();
         databaseData.allSubComponents.forEach((component) => {
-          const components = allDatabaseComponents.get(component.analysis_code) || [];
+          const componentAnalysisCode = normalizeCode(component.analysis_code);
+          const components = allDatabaseComponents.get(componentAnalysisCode) || [];
           components.push(component);
-          allDatabaseComponents.set(component.analysis_code, components);
+          allDatabaseComponents.set(componentAnalysisCode, components);
         });
         const allDatabaseSubAnalyses = new Map(
           databaseData.allSubAnalyses.map((analysis) => [normalizeCode(analysis.analysis_code), analysis]),
         );
-        const legacyComponentRows = (analysis: RateAnalysis | undefined) =>
-          (analysis?.analysis || []).filter((row) => String(row.code || "").trim() !== "");
         const toAnalysisRows = (components: DatabaseRateAnalysisComponent[]): RateAnalysisRow[] =>
           components.map((component) => ({
             code: component.reference_analysis_code || component.reference_item_code || component.component_code || "",
@@ -877,60 +1024,9 @@ export default function DsrEstimatorApp() {
             amount: component.amount ?? "",
             mark: component.reference_analysis_code || component.reference_item_code ||
               /SUB.?ANALYSIS|SUB.?AR/i.test(component.component_type) ? "A" : "",
+            source_text: component.source_text,
           }));
-        const normalizeValue = (value: string | number | undefined) => {
-            const text = String(value ?? "").trim().replace(/\s+/g, " ");
-            const numeric = Number(text.replace(/,/g, ""));
-            return text && Number.isFinite(numeric) ? String(numeric) : text.toLowerCase();
-        };
-        const normalizeNumeric = (value: string | number | undefined) => {
-          const numeric = Number(String(value ?? "").replace(/,/g, "").trim());
-          return Number.isFinite(numeric) ? numeric : null;
-        };
-        const mergeMissingLegacyComponents = (
-          databaseRows: RateAnalysisRow[],
-          legacyAnalysis: RateAnalysis | undefined,
-          shouldMergeRow: (row: RateAnalysisRow) => boolean = () => true,
-        ) => {
-          const mergedRows = databaseRows.map((row) => ({ ...row }));
-          const usedDatabaseRows = new Set<number>();
-          const missingRows: RateAnalysisRow[] = [];
-          legacyComponentRows(legacyAnalysis).filter(shouldMergeRow).forEach((legacyRow) => {
-            const legacyDescription = normalizeValue(legacyRow.description);
-            const legacyQuantity = normalizeValue(legacyRow.quantity);
-            const legacyNumbers = [legacyRow.quantity, legacyRow.rate, legacyRow.amount].map(normalizeNumeric);
-            const matchingIndex = mergedRows.findIndex((databaseRow, index) => {
-              if (usedDatabaseRows.has(index)) return false;
-              const databaseDescription = normalizeValue(databaseRow.description);
-              const sameDescriptionAndQuantity = legacyDescription !== "" &&
-                databaseDescription === legacyDescription &&
-                normalizeValue(databaseRow.quantity) === legacyQuantity;
-              const databaseNumbers = [databaseRow.quantity, databaseRow.rate, databaseRow.amount].map(normalizeNumeric);
-              const sameMeasuredValues = legacyNumbers.every((value, numberIndex) =>
-                value !== null && value === databaseNumbers[numberIndex],
-              );
-              return sameDescriptionAndQuantity || sameMeasuredValues;
-            });
-            if (matchingIndex < 0) {
-              missingRows.push(legacyRow);
-              return;
-            }
-            usedDatabaseRows.add(matchingIndex);
-            const databaseRow = mergedRows[matchingIndex];
-            mergedRows[matchingIndex] = {
-              ...legacyRow,
-              ...databaseRow,
-              code: legacyRow.code || databaseRow.code,
-              description: legacyRow.description || databaseRow.description,
-              unit: legacyRow.unit || databaseRow.unit,
-              quantity: databaseRow.quantity !== "" ? databaseRow.quantity : legacyRow.quantity,
-              rate: databaseRow.rate !== "" ? databaseRow.rate : legacyRow.rate,
-              amount: databaseRow.amount !== "" ? databaseRow.amount : legacyRow.amount,
-              mark: databaseRow.mark || legacyRow.mark,
-            };
-          });
-          return [...mergedRows, ...missingRows];
-        };
+        const normalizedDatabaseRa: Record<string, RateAnalysis> = {};
         Object.entries(databaseData.analyses).forEach(([itemCode, entry]) => {
           const normalizedCode = normalizeCode(itemCode);
           const nestedRecord = entry.subAnalysis || allDatabaseSubAnalyses.get(normalizedCode);
@@ -938,53 +1034,55 @@ export default function DsrEstimatorApp() {
             ? entry.subComponents
             : (allDatabaseComponents.get(normalizedCode) || []);
           const databaseComponents = entry.components.length > 0 ? entry.components : nestedComponents;
-          const legacyAnalysis = normalizedRa[normalizedCode]
-            || normalizedRa[normalizeCode(entry.sourceItemCode)];
-          let analysisRows = databaseComponents.length > 0
-            ? toAnalysisRows(databaseComponents)
-            : (legacyAnalysis?.analysis || []);
-          if (databaseComponents.length > 0 && legacyAnalysis) {
-            analysisRows = entry.sourceItemCode === itemCode
-              ? mergeMissingLegacyComponents(analysisRows, legacyAnalysis)
-              : mergeMissingLegacyComponents(
-                analysisRows,
-                legacyAnalysis,
-                (row) => String(row.code || "").trim() === "9999",
-              );
-          }
-          normalizedRa[normalizedCode] = {
+          const analysisRows = toAnalysisRows(databaseComponents);
+          normalizedDatabaseRa[normalizedCode] = {
             code: itemCode,
-            description: entry.darItem?.description || nestedRecord?.description || legacyAnalysis?.description || "",
-            unit: entry.darItem?.unit || nestedRecord?.unit || legacyAnalysis?.unit,
+            description: entry.darItem?.description || nestedRecord?.description || "",
+            unit: entry.darItem?.unit || nestedRecord?.unit || undefined,
             analysis: analysisRows,
-            basisDescriptions: legacyAnalysis?.basisDescriptions || getBasisDescriptions(legacyAnalysis),
+            basisDescriptions: Array.from(new Set([
+              entry.darItem?.source_text || "",
+              nestedRecord?.source_text || "",
+              ...databaseComponents.map((component) => component.source_text || ""),
+            ].filter(Boolean))),
             databaseBasis: entry.darItem?.rate_basis ?? nestedRecord?.quantity_basis ?? null,
             databaseUnit: entry.darItem?.unit || nestedRecord?.unit || null,
+            source_text: entry.darItem?.source_text || nestedRecord?.source_text || null,
           };
         });
         allDatabaseSubAnalyses.forEach((subAnalysis, analysisCode) => {
-          if (normalizedRa[analysisCode]) {
-            const legacyAnalysis = normalizedRa[analysisCode];
+          if (normalizedDatabaseRa[analysisCode]) {
+            const databaseAnalysis = normalizedDatabaseRa[analysisCode];
             const components = allDatabaseComponents.get(analysisCode) || [];
-            const databaseRows = components.length > 0 ? toAnalysisRows(components) : legacyAnalysis.analysis || [];
-            normalizedRa[analysisCode] = {
-              ...legacyAnalysis,
-              analysis: components.length > 0 ? mergeMissingLegacyComponents(databaseRows, legacyAnalysis) : databaseRows,
-              databaseBasis: legacyAnalysis.databaseBasis ?? subAnalysis.quantity_basis,
-              databaseUnit: legacyAnalysis.databaseUnit || subAnalysis.unit,
-              unit: legacyAnalysis.unit || subAnalysis.unit || undefined,
+            const databaseRows = components.length > 0 ? toAnalysisRows(components) : databaseAnalysis.analysis || [];
+            normalizedDatabaseRa[analysisCode] = {
+              ...databaseAnalysis,
+              analysis: databaseRows,
+              basisDescriptions: Array.from(new Set([
+                subAnalysis.source_text || "",
+                ...components.map((component) => component.source_text || ""),
+              ].filter(Boolean))),
+              databaseBasis: databaseAnalysis.databaseBasis ?? subAnalysis.quantity_basis,
+              databaseUnit: databaseAnalysis.databaseUnit || subAnalysis.unit,
+              unit: databaseAnalysis.unit || subAnalysis.unit || undefined,
+              source_text: databaseAnalysis.source_text || subAnalysis.source_text || null,
             };
             return;
           }
           const components = allDatabaseComponents.get(analysisCode) || [];
-          normalizedRa[analysisCode] = {
+          const analysisRows = components.length > 0 ? toAnalysisRows(components) : [];
+          normalizedDatabaseRa[analysisCode] = {
             code: subAnalysis.analysis_code,
             description: subAnalysis.description || "",
             unit: subAnalysis.unit || undefined,
-            analysis: components.length > 0 ? toAnalysisRows(components) : [],
-            basisDescriptions: getBasisDescriptions(normalizedRa[analysisCode]),
+            analysis: analysisRows,
+            basisDescriptions: Array.from(new Set([
+              subAnalysis.source_text || "",
+              ...components.map((component) => component.source_text || ""),
+            ].filter(Boolean))),
             databaseBasis: subAnalysis.quantity_basis,
             databaseUnit: subAnalysis.unit,
+            source_text: subAnalysis.source_text,
           };
         });
         try {
@@ -996,6 +1094,7 @@ export default function DsrEstimatorApp() {
           console.error("Could not restore saved NSR rate analyses:", error);
         }
         setRateAnalysisData(normalizedRa);
+        setDatabaseRateAnalysisData(normalizedDatabaseRa);
 
         const allItems = Object.values(catalogData).flatMap((group) => group.items || []);
         const parentCodes = new Set<string>();
@@ -1053,9 +1152,9 @@ export default function DsrEstimatorApp() {
       const end = Math.min(index + batchSize, items.length);
       for (; index < end; index++) {
         const item = items[index];
-        const analysis = getRAData(item.code);
+        const analysis = getRAData(item.code, "legacy");
         const rateDR = analysis?.analysis?.length
-          ? getComputedRA(item.code, false, calculationCache)?.rate ?? null
+          ? getComputedRA(item.code, false, calculationCache, "legacy")?.rate ?? null
           : null;
         computedRates[item.code] = rateDR;
         const rateDSR = Number(item.rate);
@@ -1076,7 +1175,7 @@ export default function DsrEstimatorApp() {
       if (index < items.length) {
         timer = setTimeout(calculateBatch, 0);
       } else if (isActive) {
-        setComputedDarRates((currentRates) => ({ ...currentRates, ...computedRates }));
+        setComputedDrRates((currentRates) => ({ ...currentRates, ...computedRates }));
       }
     };
 
@@ -1112,6 +1211,87 @@ export default function DsrEstimatorApp() {
     return () => { isActive = false; };
   }, []);
 
+  function calculateAllArs() {
+    if (isCalculatingAllArs || rateAnalysisLoading) return;
+
+    const items = allCatalogItems.filter((item) => !item.isMain && !item.isDeleted);
+    const drCache: Record<string, ComputedRateAnalysis> = {};
+    const dbCache: Record<string, ComputedRateAnalysis> = {};
+    const drRates: Record<string, number | null> = {};
+    const dbRates: Record<string, number | null> = {};
+    const results: { item: DsrItem; dr: ComputedRateAnalysis | null; db: ComputedRateAnalysis | null }[] = [];
+    const batchSize = 30;
+    let index = 0;
+    setIsCalculatingAllArs(true);
+
+    const exportResults = () => {
+      const rows: string[][] = [[
+        "Source Engine", "Item Code", "Description of item", "Unit",
+        "Component Code", "Description", "Quantity", "Rate (INR)", "Amount (INR)", "Mark", "Total Calculated AR (INR)",
+      ]];
+
+      results.forEach(({ item, dr, db }) => {
+        if (dr && dr.block.length > 0) {
+          dr.block.forEach((row, rowIndex) => {
+            rows.push([
+              "Legacy JSON",
+              rowIndex === 0 ? item.code : "",
+              rowIndex === 0 ? (item.fullDescription || item.description) : "",
+              rowIndex === 0 ? item.unit : "",
+              String(row.code || ""), String(row.description || ""), String(row.quantity ?? ""),
+              String(row.rate ?? ""), String(row.amount ?? ""), String(row.mark || ""),
+              rowIndex === 0 ? dr.rate.toFixed(2) : "",
+            ]);
+          });
+        }
+
+        if (db && db.block.length > 0) {
+          db.block.forEach((row, rowIndex) => {
+            rows.push([
+              "SQLite DB",
+              rowIndex === 0 ? item.code : "",
+              rowIndex === 0 ? (item.fullDescription || item.description) : "",
+              rowIndex === 0 ? item.unit : "",
+              String(row.code || ""), String(row.description || ""), String(row.quantity ?? ""),
+              String(row.rate ?? ""), String(row.amount ?? ""), String(row.mark || ""),
+              rowIndex === 0 ? db.rate.toFixed(2) : "",
+            ]);
+          });
+        }
+      });
+      downloadCSV("Rate_Analysis_Dual_Engine_Comparison.csv", rows);
+    };
+
+    const calculateBatch = () => {
+      try {
+        const end = Math.min(index + batchSize, items.length);
+        for (; index < end; index++) {
+          const item = items[index];
+          const dr = calculateRateDR(item, drCache);
+          const db = calculateRateDB(item, dbCache);
+          drRates[item.code] = dr?.rate ?? null;
+          dbRates[item.code] = db?.rate ?? null;
+          results.push({ item, dr, db });
+        }
+
+        if (index < items.length) {
+          setTimeout(calculateBatch, 0);
+          return;
+        }
+
+        setComputedDrRates(drRates);
+        setComputedDbRates(dbRates);
+        setIsCalculatingAllArs(false);
+        exportResults();
+      } catch (error) {
+        console.error("Could not calculate all rate analyses:", error);
+        setIsCalculatingAllArs(false);
+        window.alert(`Could not calculate all rate analyses: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+
+    calculateBatch();
+  }
   function createNsrForm(type: "50" | "51") {
     setNsrForm({ type, parentCode: "", isHeadingOnly: false, copyCode: "", code: "", description: "", unit: nsrUnitOptions[0] || "sqm", baseQty: 10, format: "conventional", customAddons: DEFAULT_ADDONS.map((addon) => ({ ...addon })), rows: [{ isExplanation: false, code: "", desc: "", unit: "", qty: "" as number | string, rate: "" as number | string, amt: 0, mark: "" }] });
     setIsEditingNsr(null);
@@ -1259,7 +1439,7 @@ export default function DsrEstimatorApp() {
     });
   }
   function saveThemeSettings(newTheme: ThemeSettings) { setAppTheme(newTheme); localStorage.setItem('estiPro_themeSettings', JSON.stringify(newTheme)); } function handleNewEstimate() { if(window.confirm("Start a new estimate? Unsaved changes will be lost.")) { setProjectDetails(DEFAULT_PROJECT_DETAILS); setEstimateRows([]); setCheckedItems({}); setMarketRates({}); setMarketRatesHistory([]); setMarketRaFormat("conventional"); setIsEstimateLocked(false); setActiveTab("home"); setMainNav("home"); } } function handleSaveEstimate() { if (!projectDetails.estimateId) return alert("Please provide an Estimate ID on the Home page first."); const customRaData = Object.fromEntries(Object.entries(rateAnalysisData).filter(([k]) => k.startsWith('50.') || k.startsWith('51.'))); const dataToSave = { projectDetails, estimateRows, checkedItems, customNsrs, rateAnalysisData: customRaData, marketRates, marketRaFormat, marketRaAddons }; const blob = new Blob([JSON.stringify(dataToSave, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${projectDetails.estimateId}.est`; a.click(); URL.revokeObjectURL(url); const cleanId = projectDetails.estimateId.trim(); const updatedIds = Array.from(new Set([...existingDbIds, cleanId])); setExistingDbIds(updatedIds); localStorage.setItem('estiPro_estimateIds', JSON.stringify(updatedIds)); alert(`Estimate saved successfully!`); } function handleLoadEstimate(e: React.ChangeEvent<HTMLInputElement>) { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = (evt) => { try { const parsed = JSON.parse(evt.target?.result as string) as SavedEstimate; if (parsed.projectDetails) setProjectDetails(parsed.projectDetails); if (parsed.estimateRows) setEstimateRows(parsed.estimateRows); if (parsed.checkedItems) setCheckedItems(parsed.checkedItems); if (parsed.marketRates) setMarketRates(parsed.marketRates); if (parsed.marketRaFormat) setMarketRaFormat(parsed.marketRaFormat); if (parsed.marketRaAddons) setMarketRaAddons(parsed.marketRaAddons); if (parsed.customNsrs) { const customNsrs = parsed.customNsrs; setCustomNsrs(customNsrs); setCatalog(prev => ({ ...prev, sh_50: { label: "SH 50: MODIFIED DSR ITEMS (MDSR/DR)", items: customNsrs.filter((item) => item.code.startsWith("50.")) }, sh_51: { label: "SH 51: NON-SCHEDULE ITEMS (NSR)", items: customNsrs.filter((item) => item.code.startsWith("51.")) } })); } if (parsed.rateAnalysisData) { const savedRateAnalyses = parsed.rateAnalysisData; const loaded: Record<string, RateAnalysis> = {}; Object.keys(savedRateAnalyses).forEach(k => { loaded[normalizeCode(k)] = savedRateAnalyses[k]; }); setRateAnalysisData(prev => ({...prev, ...loaded})); } setIsEstimateLocked(false); setActiveTab("home"); setMainNav("home"); } catch (err) { alert("Invalid .est file format."); } }; reader.readAsText(file); if (fileInputRef.current) fileInputRef.current.value = ''; } function handleExit() { if(window.confirm("Exit the application?")) { setHasExited(true); } } function handleEstimateIdChange(e: React.ChangeEvent<HTMLInputElement>) { const rawVal = e.target.value; if (!/^[a-zA-Z0-9 \-_.\/]*$/.test(rawVal)) return; const valWithoutSpaces = rawVal.split(' ').join(''); if (valWithoutSpaces.length > 10) return; setProjectDetails({ ...projectDetails, estimateId: rawVal.toUpperCase() }); } function handleSaveAndProceed() { const epf = projectDetails.workCategory === "custom" ? parseFloat(projectDetails.customEpf) : (WORK_CATEGORIES[projectDetails.workCategory]?.epf || 0); const esi = projectDetails.workCategory === "custom" ? parseFloat(projectDetails.customEsi) : (WORK_CATEGORIES[projectDetails.workCategory]?.esi || 0); const cont = projectDetails.contingencyType === "cpwd" ? 3 : parseFloat(projectDetails.customContingency); if (epf === 0 || esi === 0 || cont === 0 || isNaN(epf) || isNaN(esi) || isNaN(cont)) { alert("These values (EPF, ESI, Contingency) should not be made zero or left blank."); return; } if (projectDetails.estimateId.trim() !== "") { const cleanId = projectDetails.estimateId.trim(); const updatedIds = Array.from(new Set([...existingDbIds, cleanId])); setExistingDbIds(updatedIds); localStorage.setItem('estiPro_estimateIds', JSON.stringify(updatedIds)); } setMainNav("selectItems"); setActiveTab("selectItems"); }
-  function addCodeDirectly(code: string) { const item = findCatalogItemByCodeGlobal(catalog, customNsrs, code); if (item && !addedItemSet.has(code)) addSingleRowForItem(item); } function addAllDsrItems() { Object.values(catalog).flatMap((g) => g.items || []).forEach((item) => { if (!item.isMain && !item.isDeleted && (Number(item.rate) || 0) > 0 && !addedItemSet.has(item.code)) { if (!parentItemSet.has(normalizeCode(item.code))) { addSingleRowForItem(item); } } }); } function downloadCSV(filename: string, rows: string[][]) { const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(cell => `"${String(cell || "").split('"').join('""')}"`).join(",")).join("\n"); const encodedUri = encodeURI(csvContent); const link = document.createElement("a"); link.setAttribute("href", encodedUri); link.setAttribute("download", filename); document.body.appendChild(link); link.click(); document.body.removeChild(link); } function downloadMissingRaCSV() { const csvRows = [["Item Code", "Description", "Rate"]]; globalMissingRa.forEach(code => { const item = findCatalogItemByCodeGlobal(catalogRef.current, nsrRef.current, code); csvRows.push([code, item?.description || "Unknown", item?.rate ? item.rate.toString() : "N/A"]); }); downloadCSV("Missing_Rate_Analysis_DB.csv", csvRows); }
+  function addCodeDirectly(code: string) { const item = findCatalogItemByCodeGlobal(catalog, customNsrs, code); if (item && !addedItemSet.has(code)) addSingleRowForItem(item); } function addAllDsrItems() { Object.values(catalog).flatMap((g) => g.items || []).forEach((item) => { if (!item.isMain && !item.isDeleted && (Number(item.rate) || 0) > 0 && !addedItemSet.has(item.code)) { if (!parentItemSet.has(normalizeCode(item.code))) { addSingleRowForItem(item); } } }); } function downloadCSV(filename: string, rows: string[][]) { const csvContent = rows.map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n"); const url = URL.createObjectURL(new Blob([`\uFEFF${csvContent}`], { type: "text/csv;charset=utf-8" })); const link = document.createElement("a"); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); document.body.removeChild(link); window.setTimeout(() => URL.revokeObjectURL(url), 0); } function downloadMissingRaCSV() { const csvRows = [["Item Code", "Description", "Rate"]]; globalMissingRa.forEach(code => { const item = findCatalogItemByCodeGlobal(catalogRef.current, nsrRef.current, code); csvRows.push([code, item?.description || "Unknown", item?.rate ? item.rate.toString() : "N/A"]); }); downloadCSV("Missing_Rate_Analysis_DB.csv", csvRows); }
   function exportBasicRatesCSV() {
     const rows = [["Code", "Description", "Unit", "Rate"], ...filteredBasicRateRows.map((item) => [
       item.code,
@@ -1271,7 +1451,7 @@ export default function DsrEstimatorApp() {
   }
   function startVoiceRecognition() { const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SpeechRecognition) { alert("Speech Recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge."); return; } try { const recognition = new SpeechRecognition(); recognition.continuous = true; recognition.interimResults = true; recognition.lang = 'en-IN'; let localBuffer = ""; recognition.onstart = () => { setIsListening(true); setVoiceTranscriptBuffer(""); setVoiceRecognitionObj(recognition); }; recognition.onerror = (event: { error: string }) => { console.error("Speech Error:", event.error); alert("Microphone Error: " + event.error + ". Please click the 🔒 lock icon near your URL bar and 'Allow' Microphone access."); setIsListening(false); setVoiceRecognitionObj(null); }; recognition.onend = () => { setIsListening(false); setVoiceRecognitionObj(null); }; recognition.onresult = (event: SpeechRecognitionEventLike) => { let interim = ""; for (let i = event.resultIndex; i < event.results.length; ++i) { if (event.results[i].isFinal) localBuffer += event.results[i][0].transcript.toLowerCase() + " "; else interim += event.results[i][0].transcript.toLowerCase() + " "; } setVoiceTranscriptBuffer(localBuffer + interim); const combined = localBuffer + interim; if (combined.includes("stop") || combined.includes("done") || combined.includes("okay") || combined.includes("ok")) { recognition.stop(); processVoiceTranscript(combined); } }; recognition.start(); } catch (e) { alert("Failed to start voice engine."); } } function stopVoiceRecognition() { if (voiceRecognitionObj) { voiceRecognitionObj.stop(); setIsListening(false); processVoiceTranscript(voiceTranscriptBuffer); } } function processVoiceTranscript(transcript: string) { const wordMap: Record<string, string> = { "zero":"0", "one":"1", "two":"2", "three":"3", "four":"4", "five":"5", "six":"6", "seven":"7", "eight":"8", "nine":"9", "ten":"10", "eleven":"11", "twelve":"12", "thirteen":"13", "fourteen":"14", "fifteen":"15", "sixteen":"16", "seventeen":"17", "eighteen":"18", "nineteen":"19", "twenty":"20", "thirty":"30", "forty":"40", "fifty":"50", "point": ".", "dot": "." }; let processed = transcript.toLowerCase(); for (const [w, n] of Object.entries(wordMap)) { processed = processed.split(w).join(n); } processed = processed.split(' . ').join('.'); const matches = processed.match(new RegExp('\\d+(\\.\\d+[a-zA-Z]*)+', 'g')); if (matches && matches.length > 0) { const foundItems: {code: string, checked: boolean, desc: string}[] = []; matches.forEach((m: string) => { const item = findCatalogItemByCodeGlobal(catalogRef.current, nsrRef.current, m); if (item && !item.isMain && (Number(item.rate) || 0) > 0 && !foundItems.find(i => i.code === m)) { foundItems.push({ code: m, checked: true, desc: item.description }); } }); if (foundItems.length > 0) setVoiceModalItems(foundItems); else alert("Voice Assist: Heard numbers, but they did not match any valid DSR codes."); } else { alert("Voice Assist: No valid DSR item codes recognized."); } setVoiceTranscriptBuffer(""); } function handleApplyVoiceSelection() { if (!voiceModalItems) return; const newChecks = { ...checkedItems }; voiceModalItems.forEach(i => { if (i.checked) newChecks[i.code] = true; }); setCheckedItems(newChecks); setVoiceModalItems(null); } function toggleCheck(code: string) { setCheckedItems((prev) => ({ ...prev, [code]: !prev[code] })); } function removeEntireItemGroup(itemCode: string) { setEstimateRows((prev) => prev.filter((r) => r.itemCode !== itemCode).map((r, i) => ({ ...r, slNo: i + 1 }))); } function duplicateRow(row: MeasurementRow) { setEstimateRows((prev) => [...prev, { ...row, id: crypto.randomUUID() }].map((r, idx) => ({ ...r, slNo: idx + 1 }))); } function addNRowsForItemCode(itemCode: string, count: number) { const catalogItem = findCatalogItemByCodeGlobal(catalog, customNsrs, itemCode); if (!catalogItem) return; for (let i = 0; i < count; i++) addSingleRowForItem(catalogItem); } function addCheckedToEstimate() { Object.keys(checkedItems).filter((c) => checkedItems[c]).forEach((code) => { const item = [...allCatalogItems, ...customNsrs].find((i) => i.code === code); if (item && !item.isMain && !item.isDeleted && item.rate && item.rate > 0 && !addedItemSet.has(item.code)) { if (!parentItemSet.has(normalizeCode(item.code))) addSingleRowForItem(item); } }); setCheckedItems({}); } function removeRow(id: string) { setEstimateRows((prev) => prev.filter((r) => r.id !== id).map((r, idx) => ({ ...r, slNo: idx + 1 }))); } function handleFieldKeyDown(e: React.KeyboardEvent<HTMLInputElement>, rowId: string, fieldIndex: number, globalRowIndex: number) { if (e.key === "Tab") { e.preventDefault(); const shift = e.shiftKey; let nextFieldIndex = shift ? fieldIndex - 1 : fieldIndex + 1; let nextRowIndex = globalRowIndex; if (nextFieldIndex >= BOQ_FIELDS.length + 1) { nextFieldIndex = 0; nextRowIndex = globalRowIndex + 1; } else if (nextFieldIndex < 0) { nextFieldIndex = BOQ_FIELDS.length; nextRowIndex = globalRowIndex - 1; } if (nextRowIndex >= 0 && nextRowIndex < estimateRows.length) { const nextField = nextFieldIndex === 0 ? "locationDesc" : BOQ_FIELDS[nextFieldIndex - 1]; const nextId = estimateRows[nextRowIndex].id; const targetRef = inputRefs.current[`${nextId}-${nextField}`]; if (targetRef) { targetRef.focus(); targetRef.select(); } } } } function handleMarketRateChange(id: string, val: number) { setMarketRatesHistory(prev => [...prev, { ...marketRates }]); setMarketRates(prev => ({ ...prev, [id]: val })); } function handleUndoMarketRate() { if (marketRatesHistory.length > 0) { const historyCopy = [...marketRatesHistory]; const lastState = historyCopy.pop(); if (lastState) { setMarketRates(lastState); setMarketRatesHistory(historyCopy); } } else { alert("No further actions to undo."); } }
   function exportEstimateItemsCSV() {
-    const rows: string[][] = [["Item Code", "Description", "Unit", "Rate DSR (INR)", "Rate DAR (INR)"]];
+    const rows: string[][] = [["Item Code", "Description", "Unit", "Rate DSR (INR)", "Rate DR (INR)"]];
     filteredItems.slice(0, 1000).forEach((item) => {
       const analysis = getRAData(item.code);
       const rateDAR = analysis?.analysis?.length ? getComputedRA(item.code, false).rate : "";
@@ -1520,7 +1700,7 @@ export default function DsrEstimatorApp() {
                             <span className="text-[10px] text-slate-800 dark:text-slate-300 font-sans line-clamp-2" title={item.description}>{item.description}</span>
                             <div className="flex gap-1 mt-1">
                                 {!isParent && !isAdded && hasRate && <button onClick={() => addCodeDirectly(item.code)} className="w-full py-1 bg-green-600 hover:bg-green-500 text-white rounded text-[10px] font-sans font-medium">+ BOQ</button>}
-                                {!isParent && hasRA && ( <button onClick={() => setArModalStack([item.code])} className="w-full py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-[10px] font-sans font-medium">📄 View AR</button> )}
+                                {!isParent && hasRA && ( <button onClick={() => setArModalStack([{ code: item.code, source: "legacy" }])} className="w-full py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-[10px] font-sans font-medium">📄 View AR</button> )}
                             </div>
                           </div>
                         );
@@ -1538,7 +1718,7 @@ export default function DsrEstimatorApp() {
                           <span className="text-[10px] text-slate-800 dark:text-slate-300 font-sans line-clamp-2" title={item?.description}>{item?.description || "DSR Item"}</span>
                           <div className="flex gap-1 mt-1">
                               {!isParent && !isAdded && hasRate && <button onClick={() => addCodeDirectly(code)} className="w-full py-1 bg-green-600 hover:bg-green-500 text-white rounded text-[10px] font-sans font-medium">+ BOQ</button>}
-                              {!isParent && hasRA && ( <button onClick={() => setArModalStack([code])} className="w-full py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-[10px] font-sans font-medium">📄 View AR</button> )}
+                              {!isParent && hasRA && ( <button onClick={() => setArModalStack([{ code, source: "legacy" }])} className="w-full py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-[10px] font-sans font-medium">📄 View AR</button> )}
                           </div>
                         </div>
                       );
@@ -1553,6 +1733,9 @@ export default function DsrEstimatorApp() {
                   <h1 className="text-sm font-bold text-slate-200">{currentGroup.label} ({filteredItems.length} entries)</h1>
                   {selectedSubHead === "sh_50" && <button onClick={() => createNsrForm("50")} className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-bold shadow">+ New MDSR</button>}
                   {selectedSubHead === "sh_51" && <button onClick={() => createNsrForm("51")} className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-bold shadow">+ New NSR</button>}
+                  <button onClick={calculateAllArs} disabled={rateAnalysisLoading || isCalculatingAllArs} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded text-xs font-bold shadow">
+                    {isCalculatingAllArs ? "Calculating ARs..." : "Calculate All ARs"}
+                  </button>
                   <button onClick={addCheckedToEstimate} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-medium shadow">+ Add Checked Items Only</button>
                 </div>
                 <div className="flex items-center gap-4">
@@ -1572,13 +1755,14 @@ export default function DsrEstimatorApp() {
                       <th className="p-2 min-w-[320px]">Description</th>
                       <th className="p-2 w-20 text-center">Unit</th>
                       <th className="p-2 w-24 text-right">Rate DSR</th>
-                      <th className="p-2 w-24 text-right">Rate DAR</th>
+                      <th className="p-2 w-24 text-right">Rate DR</th>
+                      <th className="p-2 w-24 text-right">Rate DB</th>
                       <th className="p-2 w-40 text-center">Full Text / AR</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/40">
                     {filteredItems.slice(0, 1000).map((item, idx) => {
-                      const isChecked = Boolean(checkedItems[item.code]); const rateNum = Number(item.rate) || 0; const isAddedToSheet = addedItemSet.has(item.code); const hasRate = rateNum > 0; const isParent = parentItemSet.has(normalizeCode(item.code)); const hasRA = !!getRAData(item.code);
+                      const isChecked = Boolean(checkedItems[item.code]); const rateNum = Number(item.rate) || 0; const isAddedToSheet = addedItemSet.has(item.code); const hasRate = rateNum > 0; const isParent = parentItemSet.has(normalizeCode(item.code));
                       if (item.isMain) {
                         return (
                           <tr key={`main-${item.code}-${idx}`} className="bg-slate-900/90 font-semibold text-amber-300">
@@ -1586,6 +1770,7 @@ export default function DsrEstimatorApp() {
                             <td className="p-2 font-mono">{item.code}</td>
                             <td className="p-2 text-justify"><div className={wrapDescriptions ? "whitespace-pre-wrap leading-relaxed" : "line-clamp-2"}>{item.fullDescription || item.description}</div></td>
                             <td className="p-2 text-center text-slate-600"></td>
+                            <td className="p-2 text-right font-mono text-slate-600"></td>
                             <td className="p-2 text-right font-mono text-slate-600"></td>
                             <td className="p-2 text-right font-mono text-slate-600"></td>
                             <td className="p-2 text-center"></td>
@@ -1599,10 +1784,12 @@ export default function DsrEstimatorApp() {
                           <td className="p-2 text-slate-800 dark:text-slate-300 text-justify"><div className={wrapDescriptions ? "whitespace-pre-wrap leading-relaxed" : "line-clamp-2"}>{item.fullDescription || item.description}</div></td>
                           <td className="p-2 text-center text-slate-400">{!isParent ? (PERCENTAGE_ITEMS.includes(item.code) ? "L.S." : (item.unit || "")) : ""}</td>
                           <td className="p-2 text-right font-mono text-slate-800 dark:text-slate-300">{!isParent && hasRate ? formatCurrency(rateNum, projectDetails.numberFormat) : (!isParent && PERCENTAGE_ITEMS.includes(item.code) ? "Variable %" : "")}</td>
-                          <td className="p-2 text-right font-mono text-cyan-300">{!isParent && computedDarRates[item.code] != null ? formatCurrency(computedDarRates[item.code] as number, projectDetails.numberFormat) : ""}</td>
+                          <td className="p-2 text-right font-mono text-cyan-300">{!isParent && computedDrRates[item.code] != null ? formatCurrency(computedDrRates[item.code] as number, projectDetails.numberFormat) : ""}</td>
+                          <td className="p-2 text-right font-mono text-purple-300">{!isParent && computedDbRates[item.code] != null ? formatCurrency(computedDbRates[item.code] as number, projectDetails.numberFormat) : ""}</td>
                           <td className="p-2 text-center">
                             <div className="flex items-center justify-center gap-1">
-                              {hasRA && <button onClick={() => setArModalStack([normalizeCode(item.code)])} className="px-2 py-0.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-[10px]" title={`View rate analysis for ${item.code}`}>View AR</button>}
+                              <button onClick={() => setArModalStack([{ code: normalizeCode(item.code), source: "legacy" }])} className="px-2 py-0.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-[10px]" title={`View legacy JSON rate analysis for ${item.code}`}>View AR (Excel)</button>
+                              <button onClick={() => setArModalStack([{ code: normalizeCode(item.code), source: "database" }])} className="px-2 py-0.5 bg-purple-700 hover:bg-purple-600 text-white rounded text-[10px]" title={`View SQLite rate analysis for ${item.code}`}>View AR (DB)</button>
                             </div>
                           </td>
                         </tr>
@@ -2181,7 +2368,7 @@ export default function DsrEstimatorApp() {
                                       <td className="p-2 text-center text-amber-500 font-bold">{row.mark || ""}</td>
                                       <td className="p-2 text-center">
                                         {hasSubAr && rowCode !== "" && getRAData(rowCode) && (
-                                          <button onClick={() => setArModalStack([...arModalStack, rowCode])} className="px-2 py-1 bg-purple-600/80 hover:bg-purple-500 text-white rounded text-[10px] font-bold shadow">🔍 Nested AR</button>
+                                          <button onClick={() => setArModalStack([...arModalStack, { code: rowCode, source: "legacy" }])} className="px-2 py-1 bg-purple-600/80 hover:bg-purple-500 text-white rounded text-[10px] font-bold shadow">🔍 Nested AR</button>
                                         )}
                                       </td>
                                     </tr>
@@ -2270,10 +2457,12 @@ export default function DsrEstimatorApp() {
 
         {/* NESTED VIEW AR MODAL */}
         {arModalStack.length > 0 && (() => {
-           const activeCode = arModalStack[arModalStack.length - 1];
-           const isMarket = activeTab === "marketRateAnalysis";
-           const ra = getComputedRA(activeCode, isMarket);
-           if (!ra || !ra.block) return null;
+           const activeEntry = arModalStack[arModalStack.length - 1];
+           const activeCode = activeEntry.code;
+           const activeSource = activeEntry.source;
+           const isMarket = activeTab === "marketRateAnalysis" && activeSource === "legacy";
+           const sourceAnalysis = getRAData(activeCode, activeSource);
+           const ra = getComputedRA(activeCode, isMarket, {}, activeSource);
            
            return (
              <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
@@ -2285,15 +2474,26 @@ export default function DsrEstimatorApp() {
                       )}
                       <div>
                         <span className="font-mono text-purple-400 font-bold text-sm">Item Code: {activeCode}</span>
+                        <span className="ml-3 text-xs font-bold text-amber-300">{activeSource === "legacy" ? "AR (Excel / JSON)" : "AR (SQLite DB)"}</span>
+                        
+                        {/* RESTORED DETAILS OF COST HEADER */}
+                        <div className="text-xs text-black font-sans leading-relaxed mt-2 p-2 bg-blue-100 rounded font-bold border border-blue-300 shadow-inner text-blue-900">
+                          {getDetailsOfCostHeader(sourceAnalysis) || "Base Quantity Not Found"}
+                        </div>
+
                         <div className="text-xs text-black font-sans leading-relaxed mt-1 font-bold">
-                          {getFullTreeDescriptionGlobal(catalog, customNsrs, activeCode, rateAnalysisData)}
+                          {sourceAnalysis?.description || getFullTreeDescriptionGlobal(catalog, customNsrs, activeCode, rateAnalysisData)}
                         </div>
                       </div>
                     </div>
                     <button onClick={() => setArModalStack([])} className="text-slate-400 hover:text-white font-bold ml-4">✕ Close</button>
                  </div>
                  <div className="flex-1 overflow-auto p-4 space-y-4">
-                    <table className="w-full text-left font-mono text-xs border-collapse bg-slate-950 rounded overflow-hidden">
+                    {!sourceAnalysis?.analysis?.length || ra.block.length === 0 ? (
+                      <div className="rounded border border-slate-700 bg-slate-950 p-6 text-center text-sm text-slate-400">
+                        No rate-analysis components are available for item {activeCode} in the {activeSource === "legacy" ? "legacy JSON" : "SQLite database"} source.
+                      </div>
+                    ) : <table className="w-full text-left font-mono text-xs border-collapse bg-slate-950 rounded overflow-hidden">
                       <thead className="bg-slate-900 text-slate-400 border-b border-slate-800">
                         <tr>
                           <th className="p-2 w-16 text-center">Code</th>
@@ -2309,8 +2509,8 @@ export default function DsrEstimatorApp() {
                       <tbody className="divide-y divide-slate-800/60">
                         {ra.block.map((row, rIdx) => {
                           const isHeaderRow = !row.code && !row.unit && !row.rate && (!row.amount || row.amount === "");
-                            const rowCode = resolveNestedAnalysisCode(row);
-                            const hasSubAr = Boolean(rowCode && getRAData(rowCode));
+                            const rowCode = resolveNestedAnalysisCode(row, activeSource);
+                            const hasSubAr = Boolean(rowCode && getRAData(rowCode, activeSource));
                           
                           return (
                             <tr key={`${row.code || "-"}-${row.description}-${rIdx}`} className={isHeaderRow ? "bg-slate-900/60 font-semibold text-amber-300" : "hover:bg-slate-900/40"}>
@@ -2322,15 +2522,15 @@ export default function DsrEstimatorApp() {
                               <td className="p-2 text-right font-bold text-green-600 dark:text-green-400">{row.amount !== "" && !isNaN(Number(row.amount)) ? Number(row.amount).toFixed(2) : row.amount}</td>
                               <td className="p-2 text-center text-amber-500 font-bold">{row.mark || ""}</td>
                               <td className="p-2 text-center">
-                                  {hasSubAr && rowCode !== "" && getRAData(rowCode) && (
-                                      <button onClick={() => setArModalStack([...arModalStack, rowCode])} className="px-2 py-1 bg-purple-600/80 hover:bg-purple-500 text-white rounded text-[10px] font-bold shadow">🔍 Nested AR</button>
+                                  {hasSubAr && rowCode !== "" && getRAData(rowCode, activeSource) && (
+                                      <button onClick={() => setArModalStack([...arModalStack, { code: rowCode, source: activeSource }])} className="px-2 py-1 bg-purple-600/80 hover:bg-purple-500 text-white rounded text-[10px] font-bold shadow">🔍 Nested AR</button>
                                   )}
                               </td>
                             </tr>
                           )
                         })}
                       </tbody>
-                    </table>
+                    </table>}
                  </div>
                </div>
              </div>
