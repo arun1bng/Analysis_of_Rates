@@ -3,7 +3,7 @@ import { openDarDatabase } from "@/lib/dar-database";
 export const runtime = "nodejs";
 
 function getParentCodes(itemCode: string) {
-  const codes = [itemCode];
+  const codes: string[] = [];
   let parent = itemCode;
   while (parent.includes(".")) {
     parent = parent.slice(0, parent.lastIndexOf("."));
@@ -44,29 +44,27 @@ export async function POST(request: Request) {
       "SELECT * FROM sub_analysis_components WHERE analysis_code = ? ORDER BY COALESCE(component_seq, sub_analysis_component_id), sub_analysis_component_id",
     );
     const analyses = Object.fromEntries(itemCodes.map((itemCode) => {
-      let darItem = selectDarItem.get(itemCode) || null;
+      const darItem = selectDarItem.get(itemCode) || null;
       let components = selectComponents.all(itemCode);
       let sourceItemCode = itemCode;
       if (components.length === 0) {
-        for (const parentCode of getParentCodes(itemCode).slice(1)) {
+        for (const parentCode of getParentCodes(itemCode)) {
           const parentComponents = selectComponents.all(parentCode);
           if (parentComponents.length > 0) {
             components = parentComponents;
             sourceItemCode = parentCode;
-            darItem = darItem || selectDarItem.get(parentCode) || null;
             break;
           }
         }
       }
 
       const subAnalysis = selectSubAnalysis.get(itemCode) || null;
-      const subComponents = subAnalysis ? selectSubComponents.all(itemCode) : [];
       return [itemCode, {
         darItem,
         sourceItemCode,
         components,
         subAnalysis,
-        subComponents,
+        subComponents: subAnalysis ? selectSubComponents.all(itemCode) : [],
       }];
     }));
     const allSubAnalyses = database.prepare("SELECT * FROM sub_analyses").all();

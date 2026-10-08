@@ -7,18 +7,30 @@ interface DsrItem { code: string; description: string; fullDescription?: string;
 interface SubHeadGroup { label: string; items: DsrItem[]; }
 interface MeasurementRow { id: string; slNo: number; itemCode: string; description: string; locationDesc: string; unit: string; rate: number; nos: number | ""; num1: number | ""; num2: number | ""; length: number | ""; breadth: number | ""; height: number | ""; coefficient: number | ""; quantity: number; amount: number; referenceItemCode?: string; percentageVal?: number | ""; }
 interface RateAnalysisRow { code?: string; description?: string; unit?: string; quantity?: string | number; rate?: string | number; amount?: string | number; mark?: string; }
-interface RateAnalysis { code?: string; description?: string; analysis?: RateAnalysisRow[]; basisDescriptions?: string[]; databaseBasis?: string | number | null; databaseUnit?: string | null; }
-interface DatabaseRateAnalysisComponent { component_code: string | null; component_type: string; description: string | null; unit: string | null; quantity: number | null; rate: number | null; amount: number | null; reference_item_code: string | null; reference_analysis_code: string | null; analysis_code?: string; }
-interface DatabaseDarItem { item_code: string; description: string; unit: string | null; rate: number | null; rate_basis: string | number | null; }
+interface RateAnalysis { code?: string; description?: string; unit?: string; analysis?: RateAnalysisRow[]; basisDescriptions?: string[]; databaseBasis?: string | number | null; databaseUnit?: string | null; }
+interface DatabaseRateAnalysisComponent {
+  component_code: string | null;
+  component_type: string;
+  description: string | null;
+  unit: string | null;
+  quantity: number | null;
+  rate: number | null;
+  amount: number | null;
+  reference_item_code: string | null;
+  reference_analysis_code: string | null;
+  analysis_code?: string;
+}
+interface DatabaseDarItem { item_code: string; description: string; unit: string | null; rate_basis: string | number | null; }
 interface DatabaseSubAnalysis { analysis_code: string; description: string | null; unit: string | null; quantity_basis: string | number | null; }
+interface DatabaseAnalysisEntry {
+  darItem: DatabaseDarItem | null;
+  sourceItemCode: string;
+  components: DatabaseRateAnalysisComponent[];
+  subAnalysis: DatabaseSubAnalysis | null;
+  subComponents: DatabaseRateAnalysisComponent[];
+}
 interface DatabaseAnalysisResponse {
-  analyses: Record<string, {
-    darItem: DatabaseDarItem | null;
-    sourceItemCode: string;
-    components: DatabaseRateAnalysisComponent[];
-    subAnalysis: DatabaseSubAnalysis | null;
-    subComponents: DatabaseRateAnalysisComponent[];
-  }>;
+  analyses: Record<string, DatabaseAnalysisEntry>;
   allSubAnalyses: DatabaseSubAnalysis[];
   allSubComponents: (DatabaseRateAnalysisComponent & { analysis_code: string })[];
 }
@@ -79,14 +91,21 @@ function parseNsrItems(value: unknown): DsrItem[] {
 }
 
 function isRateAnalysis(value: unknown): value is RateAnalysis {
-  return isRecord(value) && (
-    value.analysis === undefined ||
-    (Array.isArray(value.analysis) && value.analysis.every((row) =>
+  return isRecord(value) &&
+    (value.code === undefined || typeof value.code === "string") &&
+    (value.description === undefined || typeof value.description === "string") &&
+    (value.unit === undefined || typeof value.unit === "string") &&
+    (value.basisDescriptions === undefined || (Array.isArray(value.basisDescriptions) && value.basisDescriptions.every((description) => typeof description === "string"))) &&
+    (value.analysis === undefined || (Array.isArray(value.analysis) && value.analysis.every((row) =>
       isRecord(row) &&
       (row.code === undefined || typeof row.code === "string") &&
-      (row.description === undefined || typeof row.description === "string"),
-    ))
-  );
+      (row.description === undefined || typeof row.description === "string") &&
+      (row.unit === undefined || typeof row.unit === "string") &&
+      (row.mark === undefined || typeof row.mark === "string") &&
+      (row.quantity === undefined || typeof row.quantity === "string" || typeof row.quantity === "number") &&
+      (row.rate === undefined || typeof row.rate === "string" || typeof row.rate === "number") &&
+      (row.amount === undefined || typeof row.amount === "string" || typeof row.amount === "number"),
+    )));
 }
 
 function getBasisDescriptions(analysis: RateAnalysis | undefined) {
@@ -124,32 +143,24 @@ const SUB_AR_REGEX = new RegExp("Sub[\\s\\-_]*A/?R[\\s\\-_]*\\d+[A-Z]?", "i");
 const ITEM_CODE_REGEX = new RegExp("^(\\d+[a-zA-Z]*)(\\.[a-zA-Z0-9()]+)+$");
 
 function getRateAnalysisBasis(analysis: RateAnalysis) {
-  const databaseBasis = Number(analysis.databaseBasis);
+  const databaseBasis = Number.parseFloat(String(analysis.databaseBasis ?? ""));
   if (Number.isFinite(databaseBasis) && databaseBasis > 0) return databaseBasis;
 
   const descriptions = [
     ...(analysis.basisDescriptions || []),
     ...(analysis.analysis || []).map((row) => String(row.description || "")),
   ];
-  const headerRow = descriptions.find((description) => /Details?\s+of\s+cost/i.test(description));
-  const headerMatch = headerRow?.match(/Details?\s+of\s+cost\s+for\s+([\d.]+)/i);
-  if (headerMatch) {
-    const basis = Number(headerMatch[1]);
-    if (Number.isFinite(basis) && basis > 0) return basis;
-  }
+  const footerMatch = descriptions
+    .map((description) => description.match(/Cost\s+(?:of|for)\s+([\d.]+)/i))
+    .find((match) => match !== null);
+  const footerBasis = Number(footerMatch?.[1]);
+  if (Number.isFinite(footerBasis) && footerBasis > 0) return footerBasis;
 
-  const calculatedHeaderMatch = headerRow?.match(/(?:=|\()\s*([\d.]+)\s*(?:sqm|m2|sq\.?\s*m)\b/i);
-  if (calculatedHeaderMatch) {
-    const basis = Number(calculatedHeaderMatch[1]);
-    if (Number.isFinite(basis) && basis > 0) return basis;
-  }
-
-  const footerRow = descriptions.find((description) => /^\s*Cost\s+(?:of|for)\s+/i.test(description));
-  const footerMatch = footerRow?.match(/Cost\s+(?:of|for)\s+([\d.]+)/i);
-  if (footerMatch) {
-    const basis = Number(footerMatch[1]);
-    if (Number.isFinite(basis) && basis > 0) return basis;
-  }
+  const headerMatch = descriptions
+    .map((description) => description.match(/Details\s+of\s+cost\s+for\s+([\d.]+)/i))
+    .find((match) => match !== null);
+  const headerBasis = Number(headerMatch?.[1]);
+  if (Number.isFinite(headerBasis) && headerBasis > 0) return headerBasis;
   return 1;
 }
 /* --- HELPERS --- */
@@ -560,7 +571,7 @@ export default function DsrEstimatorApp() {
           const totals = buildAddonBlock(sum, sumA, isMarket ? marketRaFormat : "conventional", isMarket ? marketRaAddons : DEFAULT_ADDONS, code, marks, orig.analysis);
           const baseQty = getRateAnalysisBasis(orig);
           const catItem = findCatalogItemByCodeGlobal(catalog, customNsrs, code);
-          const unit = orig.databaseUnit || catItem?.unit || "unit";
+          const unit = orig.unit || catItem?.unit || "unit";
           const finalRateRaw = totals.finalGrandTotal / baseQty;
           const displayRateLabel = `Rate per 1 ${unit}`;
           totals.raBlock.push({ code: "", description: `Cost for ${baseQty} ${unit}`, unit: "", quantity: "", rate: "", amount: totals.finalGrandTotal.toFixed(2), mark: "" });
@@ -823,89 +834,157 @@ export default function DsrEstimatorApp() {
             .map((item) => normalizeCode(item.code))
             .filter((code) => code && !code.startsWith("50.") && !code.startsWith("51.")),
         ));
-        const [response, legacyResponse] = await Promise.all([
+        const [databaseResponse, legacyResponse] = await Promise.all([
           fetch("/api/rate-analysis", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ itemCodes }),
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ itemCodes }),
           }),
           fetch("/data/rate_analysis_master.json"),
         ]);
-        if (!response.ok) throw new Error(`Rate analysis request failed (${response.status}).`);
-        if (!legacyResponse.ok) throw new Error(`Rate-analysis basis descriptions request failed (${legacyResponse.status}).`);
-        const loadedDatabase = await response.json() as DatabaseAnalysisResponse;
-        const legacyAnalyses = await legacyResponse.json() as Record<string, RateAnalysis>;
+        if (!databaseResponse.ok) throw new Error(`Rate analysis database request failed (${databaseResponse.status}).`);
+        if (!legacyResponse.ok) throw new Error(`Legacy rate analysis request failed (${legacyResponse.status}).`);
+        const databaseData = await databaseResponse.json() as DatabaseAnalysisResponse;
+        const legacyData: unknown = await legacyResponse.json();
+        if (!isRecord(legacyData)) throw new Error("Rate analysis JSON must contain an item-code map.");
+        const normalizedRa: Record<string, RateAnalysis> = {};
+        Object.entries(legacyData).forEach(([analysisCode, value]) => {
+          if (!isRateAnalysis(value)) {
+            throw new Error(`Invalid rate-analysis JSON record for item ${analysisCode}.`);
+          }
+          const legacyAnalysis = value;
+          const normalizedCode = normalizeCode(analysisCode);
+          normalizedRa[normalizedCode] = legacyAnalysis;
+        });
         const allDatabaseComponents = new Map<string, DatabaseRateAnalysisComponent[]>();
-        loadedDatabase.allSubComponents.forEach((component) => {
+        databaseData.allSubComponents.forEach((component) => {
           const components = allDatabaseComponents.get(component.analysis_code) || [];
           components.push(component);
           allDatabaseComponents.set(component.analysis_code, components);
         });
-        const allDatabaseSubAnalyses = new Map(loadedDatabase.allSubAnalyses.map((analysis) => [analysis.analysis_code, analysis]));
-        const catalogItems = new Map(
-          Object.values(catalogData)
-            .flatMap((group) => group.items || [])
-            .map((item) => [normalizeCode(item.code), item] as const),
+        const allDatabaseSubAnalyses = new Map(
+          databaseData.allSubAnalyses.map((analysis) => [normalizeCode(analysis.analysis_code), analysis]),
         );
-        const normalizedRa: Record<string, RateAnalysis> = {};
-        Object.entries(loadedDatabase.analyses).forEach(([itemCode, entry]) => {
-          const nestedRecord = entry.subAnalysis || allDatabaseSubAnalyses.get(itemCode);
+        const legacyComponentRows = (analysis: RateAnalysis | undefined) =>
+          (analysis?.analysis || []).filter((row) => String(row.code || "").trim() !== "");
+        const toAnalysisRows = (components: DatabaseRateAnalysisComponent[]): RateAnalysisRow[] =>
+          components.map((component) => ({
+            code: component.reference_analysis_code || component.reference_item_code || component.component_code || "",
+            description: component.description || "",
+            unit: component.unit || "",
+            quantity: component.quantity ?? "",
+            rate: component.rate ?? "",
+            amount: component.amount ?? "",
+            mark: component.reference_analysis_code || component.reference_item_code ||
+              /SUB.?ANALYSIS|SUB.?AR/i.test(component.component_type) ? "A" : "",
+          }));
+        const normalizeValue = (value: string | number | undefined) => {
+            const text = String(value ?? "").trim().replace(/\s+/g, " ");
+            const numeric = Number(text.replace(/,/g, ""));
+            return text && Number.isFinite(numeric) ? String(numeric) : text.toLowerCase();
+        };
+        const normalizeNumeric = (value: string | number | undefined) => {
+          const numeric = Number(String(value ?? "").replace(/,/g, "").trim());
+          return Number.isFinite(numeric) ? numeric : null;
+        };
+        const mergeMissingLegacyComponents = (
+          databaseRows: RateAnalysisRow[],
+          legacyAnalysis: RateAnalysis | undefined,
+          shouldMergeRow: (row: RateAnalysisRow) => boolean = () => true,
+        ) => {
+          const mergedRows = databaseRows.map((row) => ({ ...row }));
+          const usedDatabaseRows = new Set<number>();
+          const missingRows: RateAnalysisRow[] = [];
+          legacyComponentRows(legacyAnalysis).filter(shouldMergeRow).forEach((legacyRow) => {
+            const legacyDescription = normalizeValue(legacyRow.description);
+            const legacyQuantity = normalizeValue(legacyRow.quantity);
+            const legacyNumbers = [legacyRow.quantity, legacyRow.rate, legacyRow.amount].map(normalizeNumeric);
+            const matchingIndex = mergedRows.findIndex((databaseRow, index) => {
+              if (usedDatabaseRows.has(index)) return false;
+              const databaseDescription = normalizeValue(databaseRow.description);
+              const sameDescriptionAndQuantity = legacyDescription !== "" &&
+                databaseDescription === legacyDescription &&
+                normalizeValue(databaseRow.quantity) === legacyQuantity;
+              const databaseNumbers = [databaseRow.quantity, databaseRow.rate, databaseRow.amount].map(normalizeNumeric);
+              const sameMeasuredValues = legacyNumbers.every((value, numberIndex) =>
+                value !== null && value === databaseNumbers[numberIndex],
+              );
+              return sameDescriptionAndQuantity || sameMeasuredValues;
+            });
+            if (matchingIndex < 0) {
+              missingRows.push(legacyRow);
+              return;
+            }
+            usedDatabaseRows.add(matchingIndex);
+            const databaseRow = mergedRows[matchingIndex];
+            mergedRows[matchingIndex] = {
+              ...legacyRow,
+              ...databaseRow,
+              code: legacyRow.code || databaseRow.code,
+              description: legacyRow.description || databaseRow.description,
+              unit: legacyRow.unit || databaseRow.unit,
+              quantity: databaseRow.quantity !== "" ? databaseRow.quantity : legacyRow.quantity,
+              rate: databaseRow.rate !== "" ? databaseRow.rate : legacyRow.rate,
+              amount: databaseRow.amount !== "" ? databaseRow.amount : legacyRow.amount,
+              mark: databaseRow.mark || legacyRow.mark,
+            };
+          });
+          return [...mergedRows, ...missingRows];
+        };
+        Object.entries(databaseData.analyses).forEach(([itemCode, entry]) => {
+          const normalizedCode = normalizeCode(itemCode);
+          const nestedRecord = entry.subAnalysis || allDatabaseSubAnalyses.get(normalizedCode);
           const nestedComponents = entry.subComponents.length > 0
             ? entry.subComponents
-            : (allDatabaseComponents.get(itemCode) || []);
-          const components = entry.components.length > 0 ? entry.components : nestedComponents;
-          const legacyAnalysis = legacyAnalyses[normalizeCode(itemCode)]
-            || legacyAnalyses[normalizeCode(entry.sourceItemCode)];
-          const basisDescriptions = getBasisDescriptions(legacyAnalysis);
-          const analysis: RateAnalysisRow[] = components.length > 0
-            ? components.map((component) => ({
-              code: component.reference_analysis_code || component.reference_item_code || component.component_code || "",
-              description: component.description || "",
-              unit: component.unit || "",
-              quantity: component.quantity ?? "",
-              rate: component.rate ?? "",
-              amount: component.amount ?? "",
-              mark: component.reference_analysis_code || component.reference_item_code ||
-                /SUB.?ANALYSIS|SUB.?AR/i.test(component.component_type) ? "A" : "",
-            }))
+            : (allDatabaseComponents.get(normalizedCode) || []);
+          const databaseComponents = entry.components.length > 0 ? entry.components : nestedComponents;
+          const legacyAnalysis = normalizedRa[normalizedCode]
+            || normalizedRa[normalizeCode(entry.sourceItemCode)];
+          let analysisRows = databaseComponents.length > 0
+            ? toAnalysisRows(databaseComponents)
             : (legacyAnalysis?.analysis || []);
-          normalizedRa[normalizeCode(itemCode)] = {
+          if (databaseComponents.length > 0 && legacyAnalysis) {
+            analysisRows = entry.sourceItemCode === itemCode
+              ? mergeMissingLegacyComponents(analysisRows, legacyAnalysis)
+              : mergeMissingLegacyComponents(
+                analysisRows,
+                legacyAnalysis,
+                (row) => String(row.code || "").trim() === "9999",
+              );
+          }
+          normalizedRa[normalizedCode] = {
             code: itemCode,
-            description: entry.darItem?.description || nestedRecord?.description ||
-              catalogItems.get(normalizeCode(itemCode))?.description || legacyAnalysis?.description || "",
-            analysis,
-            basisDescriptions,
+            description: entry.darItem?.description || nestedRecord?.description || legacyAnalysis?.description || "",
+            unit: entry.darItem?.unit || nestedRecord?.unit || legacyAnalysis?.unit,
+            analysis: analysisRows,
+            basisDescriptions: legacyAnalysis?.basisDescriptions || getBasisDescriptions(legacyAnalysis),
             databaseBasis: entry.darItem?.rate_basis ?? nestedRecord?.quantity_basis ?? null,
             databaseUnit: entry.darItem?.unit || nestedRecord?.unit || null,
           };
         });
         allDatabaseSubAnalyses.forEach((subAnalysis, analysisCode) => {
-          if (normalizedRa[normalizeCode(analysisCode)]) return;
-          const legacyAnalysis = legacyAnalyses[normalizeCode(analysisCode)];
-          normalizedRa[normalizeCode(analysisCode)] = {
-            code: analysisCode,
-            description: subAnalysis.description || legacyAnalysis?.description || "",
-            analysis: (allDatabaseComponents.get(analysisCode) || []).map((component) => ({
-              code: component.reference_analysis_code || component.reference_item_code || component.component_code || "",
-              description: component.description || "",
-              unit: component.unit || "",
-              quantity: component.quantity ?? "",
-              rate: component.rate ?? "",
-              amount: component.amount ?? "",
-              mark: component.reference_analysis_code || component.reference_item_code ||
-                /SUB.?ANALYSIS|SUB.?AR/i.test(component.component_type) ? "A" : "",
-            })),
-            basisDescriptions: getBasisDescriptions(legacyAnalysis),
+          if (normalizedRa[analysisCode]) {
+            const legacyAnalysis = normalizedRa[analysisCode];
+            const components = allDatabaseComponents.get(analysisCode) || [];
+            const databaseRows = components.length > 0 ? toAnalysisRows(components) : legacyAnalysis.analysis || [];
+            normalizedRa[analysisCode] = {
+              ...legacyAnalysis,
+              analysis: components.length > 0 ? mergeMissingLegacyComponents(databaseRows, legacyAnalysis) : databaseRows,
+              databaseBasis: legacyAnalysis.databaseBasis ?? subAnalysis.quantity_basis,
+              databaseUnit: legacyAnalysis.databaseUnit || subAnalysis.unit,
+              unit: legacyAnalysis.unit || subAnalysis.unit || undefined,
+            };
+            return;
+          }
+          const components = allDatabaseComponents.get(analysisCode) || [];
+          normalizedRa[analysisCode] = {
+            code: subAnalysis.analysis_code,
+            description: subAnalysis.description || "",
+            unit: subAnalysis.unit || undefined,
+            analysis: components.length > 0 ? toAnalysisRows(components) : [],
+            basisDescriptions: getBasisDescriptions(normalizedRa[analysisCode]),
             databaseBasis: subAnalysis.quantity_basis,
             databaseUnit: subAnalysis.unit,
-          };
-        });
-        Object.entries(legacyAnalyses).forEach(([analysisCode, legacyAnalysis]) => {
-          const normalizedCode = normalizeCode(analysisCode);
-          if (normalizedRa[normalizedCode] || !legacyAnalysis.analysis?.length) return;
-          normalizedRa[normalizedCode] = {
-            ...legacyAnalysis,
-            basisDescriptions: getBasisDescriptions(legacyAnalysis),
           };
         });
         try {
