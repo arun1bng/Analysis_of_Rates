@@ -69,19 +69,6 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
     return SH_NAMES[prefix] || `SH ${prefix}: GENERAL WORK`;
   };
 
-  // Safe boundary isolated regex to cleanly strip item codes from concatenated descriptions
-  const formatDescription = (desc: string, code: string) => {
-    if (!desc || !code) return desc || "";
-    const escapedCode = code.toString().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(?:^|\\s)${escapedCode}(?![a-zA-Z0-9\\.])\\s*[:\\-]*\\s*(.*)`, 'is');
-    const match = desc.match(regex);
-    if (match && match[1]) {
-      return match[1].trim();
-    }
-    const fallbackRegex = new RegExp(`^${escapedCode}(?![a-zA-Z0-9\\.])\\s*[:\\-]*\\s*`, 'i');
-    return desc.replace(fallbackRegex, '').trim();
-  };
-
   // Upgraded Ancestor fetcher that accurately honors nested numerical arrays
   const getAncestors = (code: string) => {
     if (!code || !rates) return [];
@@ -120,7 +107,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
     if (!aggregatedItems[safeCode]) {
       aggregatedItems[safeCode] = {
         itemCode: safeCode,
-        description: rates.find((r: any) => r.code?.toString() === safeCode)?.description || row.description || "",
+        description: rates.find((r: any) => r.code?.toString() === safeCode)?.description ?? row.description ?? "",
         unit: row.unit,
         rate: row.rate,
         quantity: 0
@@ -291,7 +278,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
 
                   {uniqueCodes.map((itemCode) => {
                     const item = items.find(i => i.itemCode === itemCode);
-                    const baseItemDesc = rates.find((r: any) => r.code?.toString() === itemCode)?.description || item.description || "";
+                    const baseItemDesc = rates.find((r: any) => r.code?.toString() === itemCode)?.description ?? item.description ?? "";
                     const mRate = marketRates[itemCode] !== undefined ? Number(marketRates[itemCode]) : (Number(item.rate) || 0);
                     const itemAmount = Math.round(mRate * (Number(item.quantity) || 1));
                     
@@ -316,7 +303,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
                                 <td className="p-3 text-center font-bold text-amber-400 text-base border-r border-slate-700/50 align-top">{sl}</td>
                                 <td className="p-3 text-center font-mono text-blue-400 text-base border-r border-slate-700/50 align-top"><HighlightText text={anc.code} query={searchInput} highlightClass="abs-highlight" /></td>
                                 <td className="p-3 text-slate-300 leading-relaxed text-justify text-base border-r border-slate-700/50 align-top break-words max-w-xl">
-                                    <HighlightText text={formatDescription(anc.description, anc.code)} query={searchInput} highlightClass="abs-highlight" />
+                                    <HighlightText text={anc.description || ""} query={searchInput} highlightClass="abs-highlight" />
                                 </td>
                                 <td className="p-3 border-r border-slate-700/50"></td>
                                 <td className="p-3 border-r border-slate-700/50"></td>
@@ -354,9 +341,9 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
                           <HighlightText text={itemCode} query={searchInput} highlightClass="abs-highlight" />
                         </td>
                         <td className="p-3 text-slate-200 leading-relaxed text-justify text-base border-r border-slate-700/50 align-top break-words max-w-xl">
-                          <HighlightText text={formatDescription(baseItemDesc, itemCode)} query={searchInput} highlightClass="abs-highlight" />
+                          <HighlightText text={baseItemDesc} query={searchInput} highlightClass="abs-highlight" />
                         </td>
-                        <td className="p-3 text-center text-slate-400 text-base border-r border-slate-700/50 align-top">{item.unit || "cum"}</td>
+                        <td className="p-3 text-center text-slate-400 text-base border-r border-slate-700/50 align-top">{item.unit ?? ""}</td>
                         <td className="p-3 text-right font-mono font-bold text-slate-200 text-base border-r border-slate-700/50 align-top">{item.quantity ? Number(item.quantity).toFixed(2) : "1.00"}</td>
                         <td className="p-3 text-right font-mono text-slate-400 text-base border-r border-slate-700/50 align-top">{(Number(item.rate) || 0).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-green-400 font-bold text-base border-r border-slate-700/50 align-top">₹{formatAmt(itemAmount, currentFormat)}</td>

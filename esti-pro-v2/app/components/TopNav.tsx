@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-export default function TopNav({ activeTab, setActiveTab, theme, setTheme }: any) {
+export default function TopNav({ activeTab, setActiveTab, theme, setTheme, onNewEstimate, onSaveEstimate, onSaveAs, onLoadEstimate, projectId, autoSaveState }: any) {
   const [estOpen, setEstOpen] = useState(false);
   const [justOpen, setJustOpen] = useState(false);
   const estRef = useRef<HTMLDivElement>(null);
@@ -29,13 +29,14 @@ export default function TopNav({ activeTab, setActiveTab, theme, setTheme }: any
       {/* File Operations Top Bar */}
       <div className="bg-slate-50 dark:bg-slate-100 text-slate-800 text-[11px] font-bold flex gap-4 px-4 py-1.5 border-b border-slate-300 items-center justify-between shadow-sm">
         <div className="flex gap-4 items-center">
-          <button className="hover:text-blue-600 flex items-center gap-1 transition-colors"><span className="text-blue-500">➕</span> New Estimate</button>
-          <button className="hover:text-amber-600 flex items-center gap-1 transition-colors"><span className="text-amber-500">📂</span> Load Estimate</button>
-          <button className="hover:text-emerald-600 flex items-center gap-1 transition-colors"><span className="text-emerald-500">💾</span> Save Estimate</button>
+          <button onClick={onNewEstimate} className="hover:text-blue-600 flex items-center gap-1 transition-colors"><span className="text-blue-500">➕</span> New Estimate</button>
+          <button onClick={onLoadEstimate} className="hover:text-amber-600 flex items-center gap-1 transition-colors"><span className="text-amber-500">📂</span> Load Estimate</button>
+          <button onClick={onSaveAs} className="hover:text-purple-600 flex items-center gap-1 transition-colors"><span className="text-purple-500">🗂</span> Save As</button>
+          <button onClick={onSaveEstimate} className="hover:text-emerald-600 flex items-center gap-1 transition-colors"><span className="text-emerald-500">💾</span> Save Estimate</button>
           <button className="hover:text-purple-600 flex items-center gap-1 transition-colors"><span className="text-purple-500">🎨</span> Theme Settings ▾</button>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-blue-600 italic">eSTI-Pro v2.0.0 | Unsaved Project</span>
+          <span className="text-blue-600 italic">eSTI-Pro v2.0.0 | {projectId || "Starting estimate"} | Auto-save: {autoSaveState || "idle"}</span>
           <button className="text-rose-600 hover:text-rose-800 transition-colors flex items-center gap-1"><span className="text-rose-500 font-bold">✕</span> Exit</button>
         </div>
       </div>

@@ -423,6 +423,12 @@ def build_database():
                     row_type = 'NCR'
                     amt = running_components
 
+            # Keep bulk amounts on unit-conversion rows; the active DSR column-F divisor
+            # still applies later when the following per-unit rate is calculated.
+            elif re.match(r'^COST\s+(?:OF|FOR)\s+\d+(?:\.\d+)?\s*KGS?\s*\(\s*=\s*\d+(?:\.\d+)?\s*(?:QUINTAL|QTL)\b', desc_upper):
+                row_type = 'NCR'
+                amt = cpwd_round(running_components)
+
             # Modified regex: "FOR" must be followed by a number to prevent descriptive text dumps
             # Excludes text rows containing explicit inline math equations (e.g., "= 3765") from triggering the final rate dump
             elif (re.search(r'^(?:TOTAL\s+)?(?:COST|DETAIL|RATE)\b', desc_upper) or re.search(r'^(?:TOTAL\s+)?FOR\s+(?:A\s+)?\d+', desc_upper)) and not re.search(r'=\s*\d', desc_upper):

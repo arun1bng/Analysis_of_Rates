@@ -12,6 +12,51 @@ const SH_NAMES: Record<string, string> = {
   "49": "Special ARs", "50": "mDSR", "51": "NSR"
 };
 
+const getAnalysisRowType = (row: any) => {
+  if (row?.row_type === "SCR") return "SCR";
+  if (row?.row_type === "NCR") return "NCR";
+  if (row?.row_type === "CR") return "CR";
+  return row?.isNote ? "NCR" : "CR";
+};
+
+const getSingleLetterMark = (...values: any[]) => {
+  for (const value of values) {
+    const mark = String(value ?? "").trim().toUpperCase();
+    if (/^[A-Z]$/.test(mark)) return mark;
+  }
+  return "";
+};
+
+const getSpecialCalculationRule = (description: string) => {
+  const match = String(description || "").match(/(\d+(?:\.\d+)?)\s*%\s*(?:of|on)\s*["'“‘]?([A-Za-z])\b/i);
+  return match ? { percent: Number(match[1]), mark: match[2].toUpperCase() } : null;
+};
+
+const DEFAULT_CUSTOM_CHARGES = [
+  { id: "water", name: "Water charges", rate: "1" },
+  { id: "cpoh", name: "CPOH", rate: "15" },
+  { id: "cess", name: "Cess", rate: "1" },
+  { id: "gst", name: "GST", rate: "18" },
+];
+const CUSTOM_CHARGES_STORAGE_KEY = "esti-pro-nsr-custom-charges-v1";
+
+const recalculateSpecialRows = (rows: any[], forceRowId?: number) => {
+  const totalsByMark = new Map<string, number>();
+  rows.forEach(row => {
+    if (getAnalysisRowType(row) !== "CR") return;
+    const mark = getSingleLetterMark(row.mark);
+    if (mark) totalsByMark.set(mark, (totalsByMark.get(mark) || 0) + (Number(row.amount) || 0));
+  });
+
+  return rows.map(row => {
+    if (getAnalysisRowType(row) !== "SCR") return row;
+    const rule = getSpecialCalculationRule(row.description);
+    if (!rule || (row.amount_override && row.id !== forceRowId)) return row;
+    const baseAmount = totalsByMark.get(rule.mark) || 0;
+    return { ...row, amount: (baseAmount * rule.percent) / 100, amount_override: false };
+  });
+};
+
 export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData = null }: any) {
   const [itemFamily, setItemFamily] = useState(initialData ? initialData.code.split('.')[0] : "51");
   const [itemCode, setItemCode] = useState(initialData ? initialData.code : "");
@@ -21,14 +66,28 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
   const [unit, setUnit] = useState(initialData ? initialData.unit : "cum");
   const [baseQty, setBaseQty] = useState<number>(1);
   const [calcMethod, setCalcMethod] = useState("Conventional DSR");
+  const [isExternalAR, setIsExternalAR] = useState(Boolean(initialData?.isExternalAR ?? initialData?.is_external_ar));
+  const [externalRate, setExternalRate] = useState(String(initialData?.rate ?? ""));
+  const [customCharges, setCustomCharges] = useState<any[]>(DEFAULT_CUSTOM_CHARGES);
+  const [customChargesDraft, setCustomChargesDraft] = useState<any[]>(DEFAULT_CUSTOM_CHARGES);
+  const [excludeAMarkedItems, setExcludeAMarkedItems] = useState(true);
+  const [excludeAMarkedDraft, setExcludeAMarkedDraft] = useState(true);
+  const [isCustomChargesOpen, setIsCustomChargesOpen] = useState(false);
+  const previousCalcMethod = useRef("Conventional DSR");
   const [isParentHeading, setIsParentHeading] = useState(initialData ? (!initialData.unit && Number(initialData.rate) === 0) : false);
   
   const [numRowsToAdd, setNumRowsToAdd] = useState<number>(1);
   const [activeRowId, setActiveRowId] = useState<number | null>(null);
 
-  const [rows, setRows] = useState<any[]>(initialData && initialData.analysisRows ? initialData.analysisRows.filter((r:any) => r.row_type !== "CALC_SNAPSHOT") : [
-    { id: 1, isNote: true, code: "", description: "Details of cost for 1 cum", unit: "", quantity: "", rate: "", amount: 0, mark: "" }
-  ]);
+  const [rows, setRows] = useState<any[]>(() => {
+    const initialRows = initialData?.analysisRows
+      ? initialData.analysisRows.filter((r: any) => r.row_type !== "CALC_SNAPSHOT")
+      : [{ id: 1, isNote: true, row_type: "NCR", code: "", description: "Details of cost for 1 cum", unit: "", quantity: "", rate: "", amount: 0, mark: "" }];
+    return recalculateSpecialRows(initialRows.map((row: any) => {
+      const row_type = getAnalysisRowType(row);
+      return { ...row, row_type, isNote: row_type === "NCR" };
+    }));
+  });
 
   const mainDescRef = useRef<HTMLTextAreaElement>(null);
   const textareaRefs = useRef<{ [key: number]: HTMLTextAreaElement | null }>({});
@@ -47,6 +106,43 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
   useEffect(() => {
     adjustTextareaHeight(mainDescRef.current);
   }, [description]);
+
+
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CUSTOM_CHARGES_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed.charges) && parsed.charges.length) setCustomCharges(parsed.charges);
+        if (typeof parsed.excludeAMarkedItems === "boolean") setExcludeAMarkedItems(parsed.excludeAMarkedItems);
+      }
+    } catch (error) { console.warn("Could not load saved custom charges.", error); }
+  }, []);
+
+  const changeCalculationMethod = (method: string) => {
+    if (method === "Custom charges") {
+      if (calcMethod !== method) previousCalcMethod.current = calcMethod;
+      setCustomChargesDraft(customCharges.map(charge => ({ ...charge })));
+      setExcludeAMarkedDraft(excludeAMarkedItems);
+      setIsCustomChargesOpen(true);
+    } else setCalcMethod(method);
+  };
+
+  const saveCustomCharges = () => {
+    if (!customChargesDraft.length) return;
+    const charges = customChargesDraft.map((charge, index) => ({
+      id: String(charge.id || ("charge-" + Date.now() + "-" + index)),
+      name: String(charge.name || ("Charge " + (index + 1))).trim(),
+      rate: String(Math.max(0, Number(charge.rate) || 0)),
+    }));
+    try { localStorage.setItem(CUSTOM_CHARGES_STORAGE_KEY, JSON.stringify({ charges, excludeAMarkedItems: excludeAMarkedDraft })); }
+    catch (error) { console.error("Could not save custom charges.", error); alert("Custom charges could not be saved in this browser."); return; }
+    setCustomCharges(charges);
+    setExcludeAMarkedItems(excludeAMarkedDraft);
+    setCalcMethod("Custom charges");
+    setIsCustomChargesOpen(false);
+  };
 
   const availableParents = rates
     .filter((r: any) => r.code && r.code.startsWith(`${itemFamily}.`) && (!r.rate || Number(r.rate) === 0))
@@ -83,13 +179,13 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
 
   const insertNRows = () => {
     const newRows = Array.from({ length: Math.max(1, numRowsToAdd) }).map((_, i) => ({
-      id: Date.now() + i, isNote: false, code: "", description: "", unit: "", quantity: "", rate: "", amount: 0, mark: ""
+      id: Date.now() + i, isNote: false, row_type: "CR", code: "", description: "", unit: "", quantity: "", rate: "", amount: 0, mark: ""
     }));
     setRows([...rows, ...newRows]);
   };
 
   const insertRowBelow = (index: number) => {
-    const newRow = { id: Date.now(), isNote: false, code: "", description: "", unit: "", quantity: "", rate: "", amount: 0, mark: "" };
+    const newRow = { id: Date.now(), isNote: false, row_type: "CR", code: "", description: "", unit: "", quantity: "", rate: "", amount: 0, mark: "" };
     const newRows = [...rows];
     newRows.splice(index + 1, 0, newRow);
     setRows(newRows);
@@ -191,23 +287,34 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
   };
 
   const updateRow = (id: number, field: string, value: any) => {
-    setRows(rows.map(r => {
-      if (r.id === id) {
-        const updated = { ...r, [field]: value };
-        if (!updated.isNote && (field === 'quantity' || field === 'rate')) {
-           updated.amount = (Number(updated.quantity) || 0) * (Number(updated.rate) || 0);
+    setRows(prevRows => {
+      const updatedRows = prevRows.map(row => {
+        if (row.id !== id) return row;
+        const updated = { ...row, [field]: value };
+        const row_type = field === "row_type"
+          ? value
+          : field === "isNote"
+            ? (value ? "NCR" : "CR")
+            : getAnalysisRowType(updated);
+        updated.row_type = row_type;
+        updated.isNote = row_type === "NCR";
+        if (field === "amount" && row_type === "SCR") updated.amount_override = true;
+        if ((field === "description" || field === "row_type" || field === "isNote") && row_type === "SCR") updated.amount_override = false;
+        if (row_type === "CR" && (field === "quantity" || field === "rate")) {
+          updated.amount = (Number(updated.quantity) || 0) * (Number(updated.rate) || 0);
         }
         return updated;
-      }
-      return r;
-    }));
+      });
+      const forceRowId = ["description", "row_type", "isNote"].includes(field) ? id : undefined;
+      return recalculateSpecialRows(updatedRows, forceRowId);
+    });
   };
 
-  const deleteRow = (id: number) => setRows(rows.filter(r => r.id !== id));
+  const deleteRow = (id: number) => setRows(prevRows => recalculateSpecialRows(prevRows.filter(row => row.id !== id)));
 
   const handleCopySourceSelect = (val: string) => {
     setCopySource(val);
-    const sourceItem = rates.find((r: any) => String(r.code).trim() === String(val).trim());
+    const sourceItem = [...rates].reverse().find((r: any) => String(r.code).trim().toLowerCase() === String(val).trim().toLowerCase());
     if (sourceItem) {
       let desc = sourceItem.description || "";
       const exactCodeIndex = desc.indexOf(val);
@@ -222,10 +329,24 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
   const loadSourceAnalysis = async () => {
     if (!copySource) return;
     try {
-      const res = await fetch(`/api/rate-analysis?code=${copySource}`);
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        
+      const sourceCode = String(copySource).trim().toLowerCase();
+      const sourceItem = [...rates].reverse().find((item: any) => String(item.code || "").trim().toLowerCase() === sourceCode);
+      let data: any[] = [];
+
+      // Custom NSR/mDSR analyses are saved with their item; DSR analyses use the API.
+      if (Array.isArray(sourceItem?.analysisRows) && sourceItem.analysisRows.length > 0) {
+        data = sourceItem.analysisRows;
+      } else {
+        const response = await fetch("/api/rate-analysis?code=" + encodeURIComponent(String(copySource).trim()));
+        const responseData = await response.json();
+        if (!response.ok) {
+          const apiMessage = responseData && typeof responseData.error === "string" ? responseData.error : `Request failed (${response.status})`;
+          throw new Error(apiMessage);
+        }
+        data = Array.isArray(responseData) ? responseData : [];
+      }
+
+      if (data.length > 0) {
         let extractedBaseQty = 1;
         const reversedData = [...data].reverse();
         
@@ -253,15 +374,18 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
         }
         setBaseQty(extractedBaseQty);
 
-        let cutoffIndex = data.findIndex((r: any, idx: number) => {
+        // Keep summary snapshots available for base-quantity extraction, but do not copy them as component rows.
+        const analysisRows = data.filter((row: any) => row.row_type !== "CALC_SNAPSHOT");
+
+        let cutoffIndex = analysisRows.findIndex((r: any, idx: number) => {
           const desc = (r.description || "").trim().toLowerCase();
           const mark = (r.mark || r.reference_mark || r.remark || "").toUpperCase();
           
           if (mark === "W") return true;
 
           if (desc === "total" || desc === "total:" || desc === "total :") {
-             if (idx + 1 < data.length) {
-                const nextDesc = (data[idx+1].description || "").trim().toLowerCase();
+             if (idx + 1 < analysisRows.length) {
+                const nextDesc = (analysisRows[idx+1].description || "").trim().toLowerCase();
                 if (nextDesc.includes("water charge") || nextDesc.includes("cpoh") || nextDesc.includes("gst")) return true;
              }
           }
@@ -271,46 +395,57 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
           return false;
         });
         
-        const filteredData = cutoffIndex !== -1 ? data.slice(0, cutoffIndex) : data;
+        const filteredData = cutoffIndex !== -1 ? analysisRows.slice(0, cutoffIndex) : analysisRows;
 
         const mappedRows = filteredData.map((r: any, idx: number) => {
-          const isNoteRow = r.row_type === 'NCR' && (!r.amount || Number(r.amount) === 0);
-          
-          let extractedMark = r.mark || r.remarks || r.remark || r.reference_mark || r.ref || "";
-          
-          if (!extractedMark && r.component_code && r.component_code.includes(".")) {
-             if (!r.component_code.startsWith("3.")) {
+          const itemCodeVal = r.code || r.component_code || "";
+          const description = r.description || "";
+          const isSpecialCalculation = r.row_type === "SCR" || (!itemCodeVal && !!getSpecialCalculationRule(description));
+          const isNoteRow = !isSpecialCalculation && (typeof r.isNote === "boolean"
+            ? r.isNote
+            : r.row_type === "NCR" && (!r.amount || Number(r.amount) === 0));
+          const row_type = isSpecialCalculation ? "SCR" : isNoteRow ? "NCR" : "CR";
+          let extractedMark = r.mark || r.calc_mark || r.remarks || r.remark || r.reference_mark || r.ref || "";
+
+          if (!extractedMark && itemCodeVal && itemCodeVal.includes(".")) {
+             if (!itemCodeVal.startsWith("3.")) {
                  extractedMark = "A";
              }
           }
 
           return {
-             id: Date.now() + idx,
-             isNote: isNoteRow,
-             code: r.component_code || "",
-             description: r.description || "",
-             unit: r.unit || "",
-             quantity: r.quantity || "",
-             rate: r.rate || "",
-             amount: r.amount || 0,
-             mark: extractedMark
+            id: Date.now() + idx,
+            isNote: row_type === "NCR",
+            row_type,
+            code: itemCodeVal,
+            description,
+            unit: r.unit ?? "",
+            quantity: r.quantity ?? "",
+            rate: r.rate ?? "",
+            amount: r.amount ?? 0,
+            amount_override: r.amount_override ?? false,
+            mark: extractedMark
           };
         });
         
-        setRows(mappedRows);
+        setRows(recalculateSpecialRows(mappedRows));
+      } else {
+        alert(`No rate analysis is saved for item ${copySource}.`);
       }
     } catch (err) {
       console.error(err);
-      alert("Failed to fetch rate analysis.");
+      const message = err instanceof Error ? err.message : "Unknown error";
+      alert(`Failed to load the source rate analysis: ${message}`);
     }
   };
 
-  const totalAmount = rows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-  const aAmount = rows.filter(r => (r.mark || "").toUpperCase() === 'A' && !r.isNote).reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+  const totalAmount = rows.filter(r => getAnalysisRowType(r) !== "NCR").reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+  const aAmount = rows.filter(r => getSingleLetterMark(r.mark) === "A" && getAnalysisRowType(r) !== "NCR").reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
   const suffix = aAmount > 0 ? "-A" : "";
   
   let finalTotalAmt = 0;
   let w = totalAmount, wc = 0, x = 0, gst = 0, y = 0, cpoh = 0, z = 0, cess = 0;
+  let customChargeResults: any[] = [];
   
   if (calcMethod === "Conventional DSR" && w > 0) {
     wc = (w - aAmount) * 0.01;
@@ -330,12 +465,40 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
     z = y + cess;
     gst = (z - aAmount) * 0.18;
     finalTotalAmt = z + gst;
+  } else if (calcMethod === "Custom charges" && w > 0) {
+    let runningTotal = w;
+    customChargeResults = customCharges.map(charge => {
+      const rate = Number(charge.rate) || 0;
+      const base = Math.max(0, runningTotal - (excludeAMarkedItems ? aAmount : 0));
+      const amount = base * rate / 100;
+      runningTotal += amount;
+      return { ...charge, rate, amount, totalAfter: runningTotal };
+    });
+    finalTotalAmt = runningTotal;
   }
 
   const calculatedRateNum = baseQty > 0 ? (finalTotalAmt / baseQty) : 0;
   const roundedSayRate = (Math.round(calculatedRateNum * 20) / 20).toFixed(2);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    const normalizedItemCode = String(itemCode || "").trim();
+    if (!/^(50|51)(?:\.\d+[A-Za-z]?)+$/.test(normalizedItemCode)) {
+      alert("Enter a valid SH 50 or SH 51 item code, for example 51.501.");
+      return;
+    }
+    const duplicateCode = rates.some((rate: any) =>
+      String(rate.code || "").trim().toLowerCase() === normalizedItemCode.toLowerCase() &&
+      String(rate.code || "").trim().toLowerCase() !== String(initialData?.code || "").trim().toLowerCase()
+    );
+    if (duplicateCode) {
+      alert("That item code already exists in the current rate list. Please choose another code, for example 51.501.");
+      return;
+    }
+    if (isExternalAR && (!description.trim() || !unit.trim() || externalRate.trim() === "" || !Number.isFinite(Number(externalRate)) || Number(externalRate) < 0)) {
+      alert("For an External AR item, enter a description, unit, and a valid non-negative final rate.");
+      return;
+    }
+
     const savedRows = [...rows];
     let currentId = Date.now();
     
@@ -346,7 +509,7 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
        });
     };
 
-    if (!isParentHeading) {
+    if (!isParentHeading && !isExternalAR) {
       if (calcMethod === "Conventional DSR" && w > 0) {
         addCalcRow(`TOTAL "W"`, w.toFixed(2), "W");
         addCalcRow(`Add 1% Water charges on "W${suffix}"`, wc.toFixed(2));
@@ -359,6 +522,12 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
         addCalcRow(`Cost of ${Number(baseQty).toFixed(2)} ${unit}`, finalTotalAmt.toFixed(2));
         addCalcRow(`Cost of 1.00 ${unit}`, calculatedRateNum.toFixed(2));
         addCalcRow(`SAY`, roundedSayRate);
+      } else if (calcMethod === "Custom charges" && w > 0) {
+        addCalcRow("TOTAL W", w.toFixed(2), "W");
+        customChargeResults.forEach(charge => addCalcRow("Add " + charge.name + " @ " + charge.rate + "%", charge.amount.toFixed(2)));
+        addCalcRow("Cost of " + Number(baseQty).toFixed(2) + " " + unit, finalTotalAmt.toFixed(2));
+        addCalcRow("Cost of 1.00 " + unit, calculatedRateNum.toFixed(2));
+        addCalcRow("SAY", roundedSayRate);
       } else if (calcMethod === "Modified DSR" && w > 0) {
         addCalcRow(`TOTAL "W"`, w.toFixed(2), "W");
         addCalcRow(`Add 1% Water charges on "W${suffix}"`, wc.toFixed(2));
@@ -374,13 +543,19 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
       }
     }
 
-    onAddNSR({
-      code: itemCode,
-      description: description,
-      unit: isParentHeading ? "" : unit,
-      rate: isParentHeading ? 0 : Number(roundedSayRate),
-      analysisRows: isParentHeading ? [] : savedRows 
-    });
+    try {
+      await onAddNSR({
+        code: normalizedItemCode,
+        description,
+        unit: isParentHeading ? "" : unit,
+        rate: isExternalAR ? Number(externalRate) : isParentHeading ? 0 : Number(roundedSayRate),
+        analysisRows: isParentHeading || isExternalAR ? [] : savedRows,
+        isExternalAR,
+      });
+    } catch (error) {
+      console.error("Failed to save NSR item:", error);
+      alert("The NSR item could not be saved. Please try again.");
+    }
   };
 
   return (
@@ -388,7 +563,11 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
       <div className="flex justify-between items-center p-5 border-b border-gray-200">
          <div>
             <h2 className="text-xl font-bold text-amber-500">{initialData ? "Edit Custom Item" : "Create NSR item"}</h2>
-            <div className="text-sm font-bold text-gray-900">Item code: {itemCode}</div>
+            <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
+              <label htmlFor="nsr-item-code">Item code:</label>
+              <input id="nsr-item-code" type="text" value={itemCode} disabled={!!initialData} onChange={e => setItemCode(e.target.value)} className="w-36 rounded border border-gray-300 px-2 py-1 font-mono text-sm font-bold disabled:bg-gray-100 disabled:text-gray-500" placeholder="51.501" title={initialData ? "Item codes stay fixed when editing saved items." : "You may change this suggested code if you need another number."} />
+              {!initialData && <span className="text-xs font-normal text-gray-500">Suggested number; change if needed</span>}
+            </div>
          </div>
          <button onClick={onClose} className="font-bold flex items-center gap-1 hover:text-rose-600 transition-colors">✕ Close</button>
       </div>
@@ -407,8 +586,8 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                <select value={parentItem} onChange={e => setParentItem(e.target.value)} className="p-2 border border-gray-300 rounded outline-none font-semibold focus:border-blue-500">
                   <option value="Top-level item">Top-level item</option>
                   <option value="Item having (AR)">Item having (AR)</option>
-                  {availableParents.map((p: any) => (
-                    <option key={p.code} value={p.code}>{p.code}</option>
+                  {availableParents.map((p: any, index: number) => (
+                    <option key={`${p.code}-${p.category || ""}-${index}`} value={p.code}>{p.code}</option>
                   ))}
                </select>
             </div>
@@ -417,8 +596,8 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                <div className="flex gap-2 w-full">
                   <input list="rate-codes" type="text" placeholder="Code..." value={copySource} onChange={e => handleCopySourceSelect(e.target.value)} className="p-2 border border-gray-300 rounded flex-1 min-w-0 outline-none focus:border-blue-500 font-semibold" />
                   <datalist id="rate-codes">
-                    {rates.map((r: any) => (
-                      <option key={r.code} value={r.code}>{r.description?.substring(0, 40)}...</option>
+                    {rates.map((r: any, index: number) => (
+                      <option key={`${r.code}-${r.category || ""}-${index}`} value={r.code}>{r.description?.substring(0, 40)}...</option>
                     ))}
                   </datalist>
                   <button onClick={loadSourceAnalysis} type="button" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-bold whitespace-nowrap shadow shrink-0">Load source analysis</button>
@@ -432,38 +611,46 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                <textarea ref={mainDescRef} value={description} onChange={e => setDescription(e.target.value)} className="p-2 border border-gray-300 rounded outline-none font-semibold focus:border-blue-500 text-sm resize-none overflow-hidden" placeholder="Description..." style={{ minHeight: '60px' }} />
             </div>
             
-            {!isParentHeading && (
+             {!isParentHeading && (
                <div className="flex flex-col gap-4 shrink-0 w-32">
                   <div className="flex flex-col gap-1">
                      <label className="text-xs font-bold text-gray-700 truncate">Unit</label>
                      <input type="text" value={unit} onChange={e => setUnit(e.target.value)} className="p-2 border border-gray-300 rounded outline-none font-semibold focus:border-blue-500 text-sm" />
                   </div>
                   <div className="flex flex-col gap-1">
-                     <label className="text-xs font-bold text-gray-700 truncate">Base Qty</label>
-                     <input type="number" value={baseQty} onChange={e => setBaseQty(Number(e.target.value))} className="p-2 border border-gray-300 rounded outline-none font-semibold focus:border-blue-500 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                      <label className="text-xs font-bold text-gray-700 truncate">{isExternalAR ? "Final Rate (₹)" : "Base Qty"}</label>
+                      {isExternalAR
+                        ? <input type="text" inputMode="decimal" value={externalRate} onChange={e => setExternalRate(e.target.value)} className="p-2 border border-gray-300 rounded outline-none font-semibold focus:border-blue-500 text-sm text-right" placeholder="0.00" />
+                        : <input type="number" value={baseQty} onChange={e => setBaseQty(Number(e.target.value))} className="p-2 border border-gray-300 rounded outline-none font-semibold focus:border-blue-500 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />}
                   </div>
                </div>
             )}
          </div>
 
          <div className="flex items-center gap-4 border-b border-gray-200 pb-4">
-            {!isParentHeading && (
+             {!isParentHeading && !isExternalAR && (
                <div className="flex flex-col gap-1 w-64">
                   <label className="text-xs font-bold text-gray-700">Calculation method</label>
-                  <select value={calcMethod} onChange={e => setCalcMethod(e.target.value)} className="p-2 border border-gray-300 rounded outline-none font-semibold focus:border-blue-500 text-sm">
+                  <select value={calcMethod} onChange={e => changeCalculationMethod(e.target.value)} className="p-2 border border-gray-300 rounded outline-none font-semibold focus:border-blue-500 text-sm">
                      <option>Conventional DSR</option>
                      <option>Modified DSR</option>
                      <option>Custom charges</option>
                   </select>
                </div>
             )}
+             <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={isExternalAR} onChange={e => { const checked = e.target.checked; setIsExternalAR(checked); if (checked) { setIsParentHeading(false); setExternalRate(previous => previous.trim() ? previous : roundedSayRate); } }} className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500" />
+                <span className="text-sm font-bold text-violet-900">External AR (rate analysis prepared outside this software)</span>
+             </label>
             <label className={`flex items-center gap-2 cursor-pointer ${isParentHeading ? 'mt-1' : 'mt-4'}`}>
-               <input type="checkbox" checked={isParentHeading} onChange={e => setIsParentHeading(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                <input type="checkbox" checked={isParentHeading} disabled={isExternalAR} onChange={e => setIsParentHeading(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50" />
                <span className="text-sm font-bold text-gray-800">Parent heading only</span>
             </label>
          </div>
 
-         {!isParentHeading && (
+          {isExternalAR && <div className="rounded border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900">This item uses the manually entered final rate. No internal rate analysis rows will be saved or required.</div>}
+
+          {!isParentHeading && !isExternalAR && (
             <div className="mt-2">
                <div className="flex justify-between items-end mb-2">
                   <h3 className="font-bold uppercase text-gray-900 text-sm">RATE ANALYSIS ROWS</h3>
@@ -496,9 +683,11 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                            <tr key={row.id} className="group bg-white hover:bg-gray-50 transition-colors">
                               <td className="border border-gray-300 p-2 font-bold text-gray-900 text-center align-top">{idx + 1}</td>
                               <td className="border border-gray-300 p-0 align-top">
-                                 <label className="flex items-center justify-center cursor-pointer text-xs font-bold text-gray-900 w-full h-full p-2">
-                                    <input type="checkbox" checked={row.isNote} onChange={e => updateRow(row.id, 'isNote', e.target.checked)} className="rounded cursor-pointer" /> <span className="ml-1">Note</span>
-                                 </label>
+                                 <select value={getAnalysisRowType(row)} onChange={e => updateRow(row.id, "row_type", e.target.value)} className="w-full h-9 px-1 text-xs font-bold bg-white border border-gray-300 rounded outline-none focus:border-blue-500">
+                                    <option value="CR">CR</option>
+                                    <option value="NCR">NCR</option>
+                                    <option value="SCR">SCR</option>
+                                 </select>
                               </td>
                               <td className="border border-gray-300 p-0 align-top">
                                  <input 
@@ -509,8 +698,8 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                                     onChange={e => updateRow(row.id, 'code', e.target.value)} 
                                     onKeyDown={e => handleCellKeyDown(e, idx, 0, row.id)}
                                     onBlur={() => lookupCode(row.id, row.code)} // Safely fire if they click away instead of pressing Enter
-                                    disabled={row.isNote} 
-                                    placeholder={row.isNote ? "Note" : "Code"} 
+                                    disabled={getAnalysisRowType(row) !== "CR"} 
+                                    placeholder={getAnalysisRowType(row) === "NCR" ? "Note" : "Code"} 
                                     className="w-full h-full min-h-[36px] p-2 bg-transparent outline-none focus:bg-blue-50 focus:ring-inset focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 font-semibold" 
                                  />
                               </td>
@@ -526,7 +715,7 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                                     }} 
                                     onKeyDown={e => handleCellKeyDown(e, idx, 1, row.id)}
                                     className="w-full h-full min-h-[36px] p-2 bg-transparent outline-none focus:bg-blue-50 focus:ring-inset focus:ring-2 focus:ring-blue-500 font-semibold text-justify resize-none overflow-hidden block leading-tight" 
-                                    placeholder={row.isNote ? "Note text..." : "Description..."} 
+                                    placeholder={getAnalysisRowType(row) === "NCR" ? "Note text..." : getAnalysisRowType(row) === "SCR" ? "Special calculation description (e.g. 100% of P)" : "Description..."} 
                                     rows={1}
                                  />
                               </td>
@@ -538,7 +727,7 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                                     onFocus={() => setActiveRowId(row.id)} 
                                     onChange={e => updateRow(row.id, 'unit', e.target.value)} 
                                     onKeyDown={e => handleCellKeyDown(e, idx, 2, row.id)}
-                                    disabled={row.isNote} 
+                                    disabled={getAnalysisRowType(row) !== "CR"} 
                                     className="w-full h-full min-h-[36px] p-2 bg-transparent outline-none focus:bg-blue-50 focus:ring-inset focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 font-semibold" 
                                  />
                               </td>
@@ -550,7 +739,7 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                                     onFocus={() => setActiveRowId(row.id)} 
                                     onChange={e => updateRow(row.id, 'quantity', e.target.value)} 
                                     onKeyDown={e => handleCellKeyDown(e, idx, 3, row.id)}
-                                    disabled={row.isNote} 
+                                    disabled={getAnalysisRowType(row) !== "CR"} 
                                     className="w-full h-full min-h-[36px] p-2 bg-transparent outline-none focus:bg-blue-50 focus:ring-inset focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 font-semibold text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
                                  />
                               </td>
@@ -562,12 +751,16 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                                     onFocus={() => setActiveRowId(row.id)} 
                                     onChange={e => updateRow(row.id, 'rate', e.target.value)} 
                                     onKeyDown={e => handleCellKeyDown(e, idx, 4, row.id)}
-                                    disabled={row.isNote} 
+                                    disabled={getAnalysisRowType(row) !== "CR"} 
                                     className="w-full h-full min-h-[36px] p-2 bg-transparent outline-none focus:bg-blue-50 focus:ring-inset focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 font-semibold text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
                                  />
                               </td>
-                              <td className="border border-gray-300 p-2 text-right font-bold text-gray-900 font-mono align-top">
-                                 {row.isNote ? "" : Number(row.amount).toFixed(2)}
+                              <td className="border border-gray-300 p-0 align-top">
+                                 {getAnalysisRowType(row) === "SCR" ? (
+                                    <input type="number" step="0.01" value={row.amount ?? ""} onFocus={() => setActiveRowId(row.id)} onChange={e => updateRow(row.id, "amount", e.target.value)} className="w-full h-full min-h-[36px] p-2 text-right font-bold text-gray-900 font-mono bg-transparent outline-none focus:bg-blue-50 focus:ring-inset focus:ring-2 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" aria-label="Special calculation amount" />
+                                 ) : getAnalysisRowType(row) === "CR" ? (
+                                    <div className="p-2 text-right font-bold text-gray-900 font-mono">{Number(row.amount || 0).toFixed(2)}</div>
+                                 ) : null}
                               </td>
                               <td className="border border-gray-300 p-0 align-top">
                                  <input 
@@ -661,6 +854,16 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                           </>
                         )}
 
+                        {calcMethod === "Custom charges" && w > 0 && (
+                          <>
+                            <tr className="bg-emerald-100 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + 1}</td><td colSpan={6} className="border border-gray-300 p-2 text-right font-bold">TOTAL "W"</td><td className="border border-gray-300 p-2 text-right font-mono font-bold">{w.toFixed(2)}</td><td className="border border-gray-300">W</td><td className="border border-gray-300"></td></tr>
+                            {customChargeResults.map((charge, index) => <React.Fragment key={charge.id}><tr className="bg-emerald-50 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + index + 2}</td><td colSpan={6} className="border border-gray-300 p-2 text-right">Add {charge.name} @ {charge.rate}% {excludeAMarkedItems && suffix ? "(excluding A-marked amount)" : "on running total"}</td><td className="border border-gray-300 p-2 text-right font-mono">{charge.amount.toFixed(2)}</td><td className="border border-gray-300"></td><td className="border border-gray-300"></td></tr>{index < customChargeResults.length - 1 && <tr className="bg-emerald-100 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + index + 3}</td><td colSpan={6} className="border border-gray-300 p-2 text-right font-bold">TOTAL after {charge.name}</td><td className="border border-gray-300 p-2 text-right font-mono">{charge.totalAfter.toFixed(2)}</td><td className="border border-gray-300">{"C" + (index + 1)}</td><td className="border border-gray-300"></td></tr>}</React.Fragment>)}
+                            <tr className="bg-emerald-100 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + customChargeResults.length + 2}</td><td colSpan={6} className="border border-gray-300 p-2 text-right font-bold">Cost of {Number(baseQty).toFixed(2)} {unit}</td><td className="border border-gray-300 p-2 text-right font-mono font-bold">{finalTotalAmt.toFixed(2)}</td><td></td><td></td></tr>
+                            <tr className="bg-emerald-50 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + customChargeResults.length + 3}</td><td colSpan={6} className="border border-gray-300 p-2 text-right">Cost of 1.00 {unit}</td><td className="border border-gray-300 p-2 text-right font-mono">{calculatedRateNum.toFixed(2)}</td><td></td><td></td></tr>
+                            <tr className="bg-emerald-600 text-white pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + customChargeResults.length + 4}</td><td colSpan={6} className="border border-gray-300 p-2 text-right font-bold">SAY</td><td className="border border-gray-300 p-2 text-right font-mono font-bold">{roundedSayRate}</td><td></td><td></td></tr>
+                          </>
+                        )}
+
                         {calcMethod === "Modified DSR" && w > 0 && (
                           <>
                             <tr className="bg-emerald-50 pointer-events-none">
@@ -742,6 +945,21 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
          <button onClick={onClose} type="button" className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded shadow transition-colors text-sm">Cancel</button>
          <button onClick={handleSubmit} type="button" className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-6 rounded shadow transition-colors text-sm">{initialData ? "Update NSR" : "Save NSR"}</button>
       </div>
+      {isCustomChargesOpen && (
+        <div className="fixed inset-0 z-[10050] bg-black/70 flex items-center justify-center p-4" onMouseDown={() => { setIsCustomChargesOpen(false); setCalcMethod(previousCalcMethod.current); }}>
+          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl bg-white text-slate-900 shadow-2xl" onMouseDown={event => event.stopPropagation()}>
+            <div className="p-5 border-b"><h2 className="text-xl font-bold text-blue-700">Custom charges</h2><p className="mt-1 text-sm text-slate-600">Modified DSR values are prefilled. Edit rates and move charges to change the application order. Each charge applies to the running total.</p></div>
+            <div className="p-5 space-y-4">
+              <label className="flex gap-3 rounded bg-slate-50 p-3 text-sm"><input type="checkbox" checked={excludeAMarkedDraft} onChange={e => setExcludeAMarkedDraft(e.target.checked)} /><span><b>Exclude A-marked amounts</b><span className="block text-slate-500">Enabled by default to match Modified DSR.</span></span></label>
+              <div className="grid grid-cols-[1fr_120px_112px] gap-2 text-xs font-bold uppercase text-slate-500"><span>Charge name</span><span>Rate (%)</span><span>Order</span></div>
+              {customChargesDraft.map((charge, index) => <div key={charge.id} className="grid grid-cols-[1fr_120px_112px] gap-2 items-center"><input value={charge.name} onChange={e => setCustomChargesDraft(prev => prev.map((c,i) => i === index ? {...c,name:e.target.value} : c))} className="min-w-0 rounded border px-3 py-2" placeholder="Charge name" /><input type="number" min="0" step="0.01" value={charge.rate} onChange={e => setCustomChargesDraft(prev => prev.map((c,i) => i === index ? {...c,rate:e.target.value} : c))} className="w-full rounded border px-3 py-2 text-right" aria-label={charge.name + " percentage"} /><div className="flex gap-1 justify-end"><button type="button" disabled={!index} onClick={() => setCustomChargesDraft(prev => { const copy=[...prev]; [copy[index-1],copy[index]]=[copy[index],copy[index-1]]; return copy; })} className="rounded bg-slate-200 px-2 py-2 disabled:opacity-40">↑</button><button type="button" disabled={index === customChargesDraft.length-1} onClick={() => setCustomChargesDraft(prev => { const copy=[...prev]; [copy[index+1],copy[index]]=[copy[index],copy[index+1]]; return copy; })} className="rounded bg-slate-200 px-2 py-2 disabled:opacity-40">↓</button><button type="button" onClick={() => setCustomChargesDraft(prev => prev.filter((_,i) => i !== index))} className="rounded bg-rose-100 px-2 py-2 text-rose-700">×</button></div></div>)}
+              <button type="button" onClick={() => setCustomChargesDraft(prev => [...prev, {id:"charge-" + Date.now(),name:"Custom charge",rate:"0"}])} className="rounded bg-blue-50 px-4 py-2 font-semibold text-blue-700">+ Add a charge</button>
+            </div>
+            <div className="flex justify-end gap-3 border-t p-4"><button type="button" onClick={() => {setIsCustomChargesOpen(false);setCalcMethod(previousCalcMethod.current);}} className="rounded bg-slate-200 px-5 py-2 font-bold">Cancel</button><button type="button" onClick={saveCustomCharges} disabled={!customChargesDraft.length} className="rounded bg-emerald-600 px-5 py-2 font-bold text-white disabled:opacity-50">Save and use</button></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

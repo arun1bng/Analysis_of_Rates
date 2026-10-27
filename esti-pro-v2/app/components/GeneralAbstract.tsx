@@ -38,7 +38,7 @@ export default function GeneralAbstract({ estimateRows = [], rates = [], project
   estimateRows.forEach((row: any) => {
     const shTitle = getSHName(row.itemCode);
     const mRate = marketRates && marketRates[row.itemCode] !== undefined ? Number(marketRates[row.itemCode]) : (Number(row.rate) || 0);
-    const amt = Math.round(mRate * (Number(row.quantity) || 1));
+    const amt = mRate * (Number(row.quantity) || 1);
     
     if (!groupedTotals[shTitle]) groupedTotals[shTitle] = 0;
     groupedTotals[shTitle] += amt;

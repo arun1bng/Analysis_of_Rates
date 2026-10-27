@@ -16,6 +16,7 @@ const HighlightText = ({ text, query, highlightClass }: { text: string, query: s
 };
 
 const cleanCode = (c: any) => c?.toString().trim() || "";
+const isExternalRateItem = (item: any) => item?.isExternalAR === true || Number(item?.is_external_ar) === 1;
 
 const sortCodes = (a: string, b: string) => {
   const regex = /(\d+)|([a-zA-Z]+)/g;
@@ -37,7 +38,7 @@ const sortCodes = (a: string, b: string) => {
 
 export default function DatabaseExplorer({ 
   rates, search, setSearch, addToMeasurement, addAllToMeasurement, handleViewAR, theme,
-  checkedItems, setCheckedItems, estimateRows, onOpenCreateModal, onEditNSR, onDeleteNSR
+  checkedItems, setCheckedItems, estimateRows, onOpenCreateModal, onEditNSR, onDeleteNSR, customRateCodes = [], selectedSHTarget
 }: any) {
   
   const safeRates = useMemo(() => {
@@ -45,7 +46,11 @@ export default function DatabaseExplorer({
     return parsed.sort((a: any, b: any) => sortCodes(a.code, b.code));
   }, [rates]);
 
-  const [selectedSH, setSelectedSH] = useState("SH 2: EARTH WORK");
+  const [selectedSH, setSelectedSH] = useState(selectedSHTarget || "SH 2: EARTH WORK");
+
+  useEffect(() => {
+    if (selectedSHTarget) setSelectedSH(selectedSHTarget);
+  }, [selectedSHTarget]);
   const [fullWrap, setFullWrap] = useState(true);
   const [isSidebarHidden, setIsSidebarHidden] = useState(false);
   
@@ -85,18 +90,6 @@ export default function DatabaseExplorer({
     "SH 50: MODIFIED DSR ITEMS (mDSR)", "SH 51: NON-SCHEDULE ITEMS (NS)"
   ];
 
-  const formatDescription = (desc: string, code: string) => {
-    if (!desc || !code) return desc || "";
-    const escapedCode = cleanCode(code).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(?:^|\\s)${escapedCode}(?![a-zA-Z0-9\\.])\\s*[:\\-]*\\s*(.*)`, 'is');
-    const match = desc.match(regex);
-    if (match && match[1]) {
-      return match[1].trim();
-    }
-    const fallbackRegex = new RegExp(`^${escapedCode}(?![a-zA-Z0-9\\.])\\s*[:\\-]*\\s*`, 'i');
-    return desc.replace(fallbackRegex, '').trim();
-  };
-
   const filteredRates = safeRates.filter((r: any) => {
     const safeCode = cleanCode(r.code);
     const matchesSearch = safeCode.toLowerCase().includes(mainSearchQuery.toLowerCase()) || r.description?.toLowerCase().includes(mainSearchQuery.toLowerCase());
@@ -119,7 +112,7 @@ export default function DatabaseExplorer({
     return matchesSearch && (matchesSH || mainSearchQuery.length > 0);
   });
 
-  const validEntriesCount = filteredRates.filter((r: any) => r.rate && Number(r.rate) > 0).length;
+  const validEntriesCount = filteredRates.filter((r: any) => isExternalRateItem(r) || (r.rate && Number(r.rate) > 0)).length;
 
   const handleCheckboxToggle = (code: string) => {
     const safeC = cleanCode(code);
@@ -127,7 +120,7 @@ export default function DatabaseExplorer({
   };
 
   const handleAddCheckedItems = () => {
-    const itemsToAdd = safeRates.filter((r: any) => checkedItems.includes(cleanCode(r.code)) && !boqTrack[cleanCode(r.code)] && Number(r.rate) > 0);
+    const itemsToAdd = safeRates.filter((r: any) => checkedItems.includes(cleanCode(r.code)) && !boqTrack[cleanCode(r.code)] && (isExternalRateItem(r) || Number(r.rate) > 0));
     addAllToMeasurement(itemsToAdd);
     
     setCheckedItems((prev: string[]) => prev.filter(c => {
@@ -138,7 +131,7 @@ export default function DatabaseExplorer({
   };
 
   const handleAddAllToBOQ = () => {
-    const itemsToAdd = safeRates.filter((r: any) => checkedItems.includes(cleanCode(r.code)) && !boqTrack[cleanCode(r.code)] && Number(r.rate) > 0);
+    const itemsToAdd = safeRates.filter((r: any) => checkedItems.includes(cleanCode(r.code)) && !boqTrack[cleanCode(r.code)] && (isExternalRateItem(r) || Number(r.rate) > 0));
     addAllToMeasurement(itemsToAdd);
   };
 
@@ -150,7 +143,7 @@ export default function DatabaseExplorer({
     const codes = bulkInput.match(/\b\d+[a-zA-Z]*(?:\.\d+[a-zA-Z]*)+\b/gi) || [];
     const validCodes = codes.map(c => {
       const match = safeRates.find((r: any) => cleanCode(r.code).toLowerCase() === c.toLowerCase());
-      return (match && Number(match.rate) > 0) ? cleanCode(match.code) : null;
+      return (match && (isExternalRateItem(match) || Number(match.rate) > 0)) ? cleanCode(match.code) : null;
     }).filter(Boolean) as string[];
     
     if (validCodes.length > 0) {
@@ -207,7 +200,7 @@ export default function DatabaseExplorer({
 
     list = list.map(c => {
       const match = safeRates.find((r: any) => cleanCode(r.code).toLowerCase() === c.toLowerCase());
-      return (match && Number(match.rate) > 0) ? cleanCode(match.code) : null;
+      return (match && (isExternalRateItem(match) || Number(match.rate) > 0)) ? cleanCode(match.code) : null;
     }).filter(Boolean) as string[];
     
     setHeardCodes(list);
@@ -446,7 +439,8 @@ export default function DatabaseExplorer({
               ) : (
                 filteredRates.map((item: any, idx: number) => {
                   const safeCode = cleanCode(item.code);
-                  const isParent = !item.rate || Number(item.rate) === 0;
+                  const isExternalAR = isExternalRateItem(item);
+                  const isParent = !isExternalAR && (!item.rate || Number(item.rate) === 0);
                   const isInBoq = boqTrack[safeCode];
                   const isSelected = checkedItems.includes(safeCode);
 
@@ -459,23 +453,27 @@ export default function DatabaseExplorer({
                              <HighlightText text={safeCode} query={mainSearchQuery} highlightClass="main-highlight" />
                              {isSelected && !isInBoq && <span className="text-[10px] bg-blue-900/50 text-blue-400 px-1.5 py-0.5 rounded border border-blue-800">Selected</span>}
                              {isInBoq && <span className="text-[10px] bg-emerald-900/50 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-800">In BOQ</span>}
+                              {isExternalAR && <span className="text-[10px] bg-violet-900/50 text-violet-300 px-1.5 py-0.5 rounded border border-violet-700" title="External rate analysis; entered rate is used directly">Ext. RA</span>}
                            </span>
                         ) : (
-                           <HighlightText text={safeCode} query={mainSearchQuery} highlightClass="main-highlight" />
+                           <>
+                             <HighlightText text={safeCode} query={mainSearchQuery} highlightClass="main-highlight" />
+                             {isExternalAR && <span className="ml-2 text-[10px] bg-violet-900/50 text-violet-300 px-1.5 py-0.5 rounded border border-violet-700" title="External rate analysis; entered rate is used directly">Ext. RA</span>}
+                           </>
                         )}
                       </td>
                       
                       <td className={`p-3 text-slate-200 text-justify text-base leading-relaxed ${fullWrap ? '' : 'truncate max-w-xl'}`}>
-                        <HighlightText text={formatDescription(item.description, safeCode)} query={mainSearchQuery} highlightClass="main-highlight" />
+                        <HighlightText text={item.description || ""} query={mainSearchQuery} highlightClass="main-highlight" />
                       </td>
-                      <td className="p-3 text-center text-slate-400 text-sm">{isParent ? "" : (item.unit || "cum")}</td>
-                      <td className="p-3 text-right font-mono text-green-400 font-bold text-base">{isParent ? "" : Number(item.rate).toFixed(2)}</td>
+                      <td className="p-3 text-center text-slate-400 text-sm">{item.unit ?? ""}</td>
+                      <td className="p-3 text-right font-mono text-green-400 font-bold text-base">{item.rate === null || item.rate === undefined || item.rate === "" ? "" : Number(item.rate).toFixed(2)}</td>
                       <td className="p-3 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          {!isParent && (
+                          {!isParent && !isExternalAR && (
                             <button onClick={() => handleViewAR(item)} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-bold shadow transition-colors pointer-events-auto">View AR</button>
                           )}
-                          {!isParent && (safeCode.startsWith('49.') || safeCode.startsWith('50.') || safeCode.startsWith('51.')) && (
+                          {!isParent && customRateCodes.includes(safeCode) && (
                             <>
                               <button onClick={() => onEditNSR && onEditNSR(item)} className="px-2 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold shadow transition-colors pointer-events-auto">Edit</button>
                               <button onClick={() => setDeleteConfirmItem(item)} className="px-2 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-bold shadow transition-colors pointer-events-auto">✕</button>

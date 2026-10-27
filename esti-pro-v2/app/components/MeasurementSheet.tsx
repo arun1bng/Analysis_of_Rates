@@ -263,19 +263,6 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
     setMatchIdx(nextIdx);
   };
 
-  // Safe boundary isolated regex to cleanly strip item codes from concatenated descriptions
-  const formatDescription = (desc: string, code: string) => {
-    if (!desc || !code) return desc || "";
-    const escapedCode = code.toString().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(?:^|\\s)${escapedCode}(?![a-zA-Z0-9\\.])\\s*[:\\-]*\\s*(.*)`, 'is');
-    const match = desc.match(regex);
-    if (match && match[1]) {
-      return match[1].trim();
-    }
-    const fallbackRegex = new RegExp(`^${escapedCode}(?![a-zA-Z0-9\\.])\\s*[:\\-]*\\s*`, 'i');
-    return desc.replace(fallbackRegex, '').trim();
-  };
-
   // Upgraded Ancestor fetcher that accurately honors nested numerical arrays
   const getAncestors = (code: string) => {
     if (!code || !rates) return [];
@@ -484,7 +471,7 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
                                     <HighlightText text={anc.code} query={searchQuery} highlightClass="msmt-highlight" />
                                   </td>
                                   <td className="p-3 text-slate-300 leading-relaxed text-justify text-base border-r border-slate-700/50 align-top break-words max-w-xl">
-                                      <HighlightText text={formatDescription(anc.description, anc.code)} query={searchQuery} highlightClass="msmt-highlight" />
+                                      <HighlightText text={anc.description || ""} query={searchQuery} highlightClass="msmt-highlight" />
                                   </td>
                                   <td className="p-3 border-r border-slate-700/50"></td><td className="p-3 border-r border-slate-700/50"></td><td className="p-3 border-r border-slate-700/50"></td><td className="p-3 border-r border-slate-700/50"></td><td className="p-3 border-r border-slate-700/50"></td><td className="p-3 border-r border-slate-700/50"></td><td className="p-3 border-r border-slate-700/50"></td><td className="p-3 border-r border-slate-700/50"></td><td className="p-3"></td>
                               </tr>
@@ -518,7 +505,7 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
                             <HighlightText text={itemCode} query={searchQuery} highlightClass="msmt-highlight" />
                           </td>
                           <td className="p-3 text-slate-200 leading-relaxed text-justify text-base border-r border-slate-700/50 align-top break-words max-w-xl">
-                            <HighlightText text={formatDescription(baseItem.description, itemCode)} query={searchQuery} highlightClass="msmt-highlight" />
+                            <HighlightText text={baseItem.description || ""} query={searchQuery} highlightClass="msmt-highlight" />
                           </td>
                           <td colSpan={9} className="p-2 align-bottom border-r border-slate-700/50">
                             <div className="flex items-center justify-end gap-2 w-full h-full">
