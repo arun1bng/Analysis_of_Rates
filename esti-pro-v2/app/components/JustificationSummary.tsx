@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function JustificationSummary({ estimateRows, theme, marketRates }: any) {
+export default function JustificationSummary({ estimateRows, theme, marketRates, justificationPercentage }: any) {
   const getContainerClass = () => {
     if (theme === "dark") return "bg-slate-900 text-slate-200";
     if (theme === "custom") return "bg-indigo-950 text-indigo-100";
@@ -19,7 +19,9 @@ export default function JustificationSummary({ estimateRows, theme, marketRates 
     return sum + (mRate * (item.quantity || 1));
   }, 0);
   
-  const deviation = totalDSR > 0 ? (((totalMarket - totalDSR) / totalDSR) * 100).toFixed(2) : "0.00";
+  const deviation = justificationPercentage !== null && justificationPercentage !== undefined
+    ? Number(justificationPercentage).toFixed(2)
+    : totalDSR > 0 ? (((totalMarket - totalDSR) / totalDSR) * 100).toFixed(2) : "0.00";
   const isPositive = Number(deviation) > 0;
 
   // Generate and download Summary CSV

@@ -1,3 +1,4 @@
+import { buildHierarchicalRows } from "../utils/dsrHierarchy";
 import React, { useState } from "react";
 
 const HighlightText = ({ text, query, highlightClass }: { text: string, query: string, highlightClass: string }) => {
@@ -70,19 +71,6 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
   };
 
   // Upgraded Ancestor fetcher that accurately honors nested numerical arrays
-  const getAncestors = (code: string) => {
-    if (!code || !rates) return [];
-    const parts = code.toString().split('.');
-    const ancestors = [];
-    let current = "";
-    for (let i = 0; i < parts.length - 1; i++) {
-        current += (i === 0 ? parts[i] : "." + parts[i]);
-        const match = rates.find((r: any) => r.code?.toString() === current);
-        if (match) ancestors.push({ code: match.code.toString(), description: match.description });
-    }
-    return ancestors;
-  };
-
   const sortCodes = (a: string, b: string) => {
     const regex = /(\d+)|([a-zA-Z]+)/g;
     const pA = Array.from(a.matchAll(regex)).map(m => m[0]);
@@ -120,6 +108,9 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
   const itemsToDisplay = searchInput ? displayList.filter((row: any) => {
      return row.itemCode?.toLowerCase().includes(searchInput.toLowerCase()) || row.description.toLowerCase().includes(searchInput.toLowerCase());
   }) : displayList;
+
+  const hierarchyRows = buildHierarchicalRows(itemsToDisplay, rates);
+  const hierarchyItemByCode = new Map(hierarchyRows.filter((row) => row.isItem).map((row) => [row.itemCode, row]));
 
   const groupedItems: Record<string, any[]> = {};
   itemsToDisplay.forEach((row: any) => {
@@ -251,8 +242,11 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
             {sortedSHNames.length === 0 ? (
               <tr><td colSpan={9} className="p-10 text-center text-slate-500 italic text-lg">Measurement Sheet is empty.</td></tr>
             ) : sortedSHNames.map((shTitle, shIdx) => {
-              const shIndex = shIdx + 1;
               const items = groupedItems[shTitle];
+              const sectionCode = String(items[0]?.itemCode || "").split(".")[0];
+              const sectionRows = hierarchyRows.filter((row) => row.sectionCode === sectionCode);
+              const sectionHeader = sectionRows.find((row) => row.isSubhead);
+              const shIndex = Number(sectionHeader?.serialNo || shIdx + 1);
               
               const shTotal = items.reduce((sum, item) => {
                 const mRate = marketRates[item.itemCode] !== undefined ? Number(marketRates[item.itemCode]) : (Number(item.rate) || 0);
@@ -261,7 +255,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
 
               let counters = [0, 0, 0, 0, 0, 0];
               let currentPath: string[] = [];
-              const uniqueCodes = Object.keys(items.reduce((acc: any, cur: any) => { acc[cur.itemCode] = cur; return acc; }, {})).sort(sortCodes);
+              const uniqueCodes = Object.keys(items.reduce((acc: any, cur: any) => { acc[cur.itemCode] = cur; return acc; }, {})).filter((code) => hierarchyItemByCode.has(code)).sort(sortCodes);
 
               return (
                 <React.Fragment key={shTitle}>
@@ -273,16 +267,18 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
                     </td>
                     <td className="p-3 text-center font-bold text-amber-500 text-base border-r border-slate-700/50">{shIndex}</td>
                     <td className="p-3 text-center font-mono font-bold text-blue-400 text-base border-r border-slate-700/50">{extractSHNum(shTitle)}</td>
-                    <td colSpan={6} className="p-3 font-bold uppercase tracking-widest text-slate-300 text-base">{shTitle}</td>
+                    <td colSpan={6} className="p-3 font-bold uppercase tracking-widest text-slate-300 text-base">{sectionHeader?.description || shTitle}</td>
                   </tr>
 
                   {uniqueCodes.map((itemCode) => {
                     const item = items.find(i => i.itemCode === itemCode);
-                    const baseItemDesc = rates.find((r: any) => r.code?.toString() === itemCode)?.description ?? item.description ?? "";
+                    const baseItemDesc = hierarchyItemByCode.get(itemCode)?.description ?? rates.find((r: any) => r.code?.toString() === itemCode)?.description ?? item.description ?? "";
                     const mRate = marketRates[itemCode] !== undefined ? Number(marketRates[itemCode]) : (Number(item.rate) || 0);
                     const itemAmount = Math.round(mRate * (Number(item.quantity) || 1));
                     
-                    const ancestors = getAncestors(itemCode);
+                    const ancestors = sectionRows
+                      .filter((row) => row.isParent && !row.isSubhead && itemCode.startsWith(`${row.itemCode}.`))
+                      .map((row) => ({ code: row.itemCode, description: row.description, serialNo: row.serialNo }));
                     let divergeIdx = 0;
                     while (divergeIdx < ancestors.length && divergeIdx < currentPath.length && ancestors[divergeIdx].code === currentPath[divergeIdx]) {
                         divergeIdx++;
@@ -292,10 +288,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
                     const rowsToRender: any[] = [];
 
                     newAncestors.forEach((anc, i) => {
-                        const depth = divergeIdx + i;
-                        counters[depth]++;
-                        for (let j = depth + 1; j < counters.length; j++) counters[j] = 0;
-                        const sl = `${shIndex}` + counters.slice(0, depth + 1).map(c => `.${c}`).join('');
+                        const sl = anc.serialNo;
 
                         rowsToRender.push(
                             <tr className="bg-slate-900/50 border-b border-slate-800" key={`anc-${anc.code}`}>
@@ -315,10 +308,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
                     });
 
                     currentPath = [...ancestors.map(a => a.code), itemCode];
-                    const leafDepth = ancestors.length;
-                    counters[leafDepth]++;
-                    for (let j = leafDepth + 1; j < counters.length; j++) counters[j] = 0;
-                    const slLeaf = `${shIndex}` + counters.slice(0, leafDepth + 1).map(c => `.${c}`).join('');
+                    const slLeaf = hierarchyItemByCode.get(itemCode)?.serialNo || `${shIndex}`;
 
                     const isItemSelected = selectedItemsForDelete.has(itemCode);
                     const baseItem = rates?.find((r: any) => r.code?.toString() === itemCode) || item;

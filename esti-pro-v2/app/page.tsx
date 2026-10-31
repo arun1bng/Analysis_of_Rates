@@ -49,6 +49,8 @@ export default function App() {
   const [estimateRows, setEstimateRows] = useState<any[]>([]);
   
   const [marketRates, setMarketRates] = useState<Record<string, number>>({});
+  const [justifiedRates, setJustifiedRates] = useState<Record<string, number>>({});
+  const [justificationPercentage, setJustificationPercentage] = useState<number | null>(null);
   const [projectCustomItems, setProjectCustomItems] = useState<any[]>([]);
   const [projectRateAnalyses, setProjectRateAnalyses] = useState<Record<string, any>>({});
   const [rates, setRates] = useState<any[]>([]);
@@ -588,9 +590,11 @@ export default function App() {
           {activeTab === "radsr" && <RateAnalysisDSR estimateRows={estimateRows} rates={estimateRates} marketRates={marketRates} analysisSnapshot={projectRateAnalyses} theme={theme} />}
           
           {activeTab === "ratelist" && <RateList theme={theme} projectId={activeProjectDbId} onSaveRates={saveProjectMarketRates} marketRates={marketRates} setMarketRates={setMarketRates} estimateRows={estimateRows} rates={estimateRates} nsrItems={customItemsForProject} />}
-          {activeTab === "ramarket" && <RateAnalysisMarket estimateRows={estimateRows} rates={estimateRates} theme={theme} marketRates={marketRates} projectId={activeProjectDbId} customItems={projectCustomItems} analysisSnapshot={projectRateAnalyses} />}
-          {activeTab === "juststatement" && <JustificationStatement estimateRows={estimateRows} theme={theme} marketRates={marketRates} />}
-          {activeTab === "justsummary" && <JustificationSummary estimateRows={estimateRows} theme={theme} marketRates={marketRates} />}
+          {(activeTab === "ramarket" || activeTab === "juststatement") && <div className={activeTab === "ramarket" ? "flex-1 min-h-0" : "hidden"}>
+            <RateAnalysisMarket estimateRows={estimateRows} rates={estimateRates} theme={theme} marketRates={marketRates} projectId={activeProjectDbId} customItems={projectCustomItems} analysisSnapshot={projectRateAnalyses} setJustifiedRates={setJustifiedRates} />
+          </div>}
+          {activeTab === "juststatement" && <JustificationStatement estimateRows={estimateRows} rates={estimateRates} theme={theme} marketRates={justifiedRates} projectDetails={projectDetails} setJustificationPercentage={setJustificationPercentage} />}
+          {activeTab === "justsummary" && <JustificationSummary estimateRows={estimateRows} theme={theme} marketRates={marketRates} justificationPercentage={justificationPercentage} />}
           
         </main>
       </div>

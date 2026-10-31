@@ -442,6 +442,10 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
   const totalAmount = rows.filter(r => getAnalysisRowType(r) !== "NCR").reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
   const aAmount = rows.filter(r => getSingleLetterMark(r.mark) === "A" && getAnalysisRowType(r) !== "NCR").reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
   const suffix = aAmount > 0 ? "-A" : "";
+  // Match the rate-analysis components: financial overheads apply only to the
+  // non-A portion when the A-exclusion option is enabled.
+  const overheadBase = Math.max(0, totalAmount - (excludeAMarkedItems ? aAmount : 0));
+  const hasOverheadBase = overheadBase > 0;
   
   let finalTotalAmt = 0;
   let w = totalAmount, wc = 0, x = 0, gst = 0, y = 0, cpoh = 0, z = 0, cess = 0;
@@ -511,32 +515,38 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
 
     if (!isParentHeading && !isExternalAR) {
       if (calcMethod === "Conventional DSR" && w > 0) {
-        addCalcRow(`TOTAL "W"`, w.toFixed(2), "W");
-        addCalcRow(`Add 1% Water charges on "W${suffix}"`, wc.toFixed(2));
-        addCalcRow(`TOTAL "X"`, x.toFixed(2), "X");
-        addCalcRow(`Add GST on "X${suffix}" (multiplying factor 0.2127)`, gst.toFixed(2));
-        addCalcRow(`TOTAL "Y"`, y.toFixed(2), "Y");
-        addCalcRow(`Add 15% CPOH on "Y${suffix}"`, cpoh.toFixed(2));
-        addCalcRow(`TOTAL "Z"`, z.toFixed(2), "Z");
-        addCalcRow(`Add Cess @ 1% on "Z${suffix}"`, cess.toFixed(2));
+        if (hasOverheadBase) {
+          addCalcRow(`TOTAL "W"`, w.toFixed(2), "W");
+          addCalcRow(`Add 1% Water charges on "W${suffix}"`, wc.toFixed(2));
+          addCalcRow(`TOTAL "X"`, x.toFixed(2), "X");
+          addCalcRow(`Add GST on "X${suffix}" (multiplying factor 0.2127)`, gst.toFixed(2));
+          addCalcRow(`TOTAL "Y"`, y.toFixed(2), "Y");
+          addCalcRow(`Add 15% CPOH on "Y${suffix}"`, cpoh.toFixed(2));
+          addCalcRow(`TOTAL "Z"`, z.toFixed(2), "Z");
+          addCalcRow(`Add Cess @ 1% on "Z${suffix}"`, cess.toFixed(2));
+        }
         addCalcRow(`Cost of ${Number(baseQty).toFixed(2)} ${unit}`, finalTotalAmt.toFixed(2));
         addCalcRow(`Cost of 1.00 ${unit}`, calculatedRateNum.toFixed(2));
         addCalcRow(`SAY`, roundedSayRate);
       } else if (calcMethod === "Custom charges" && w > 0) {
-        addCalcRow("TOTAL W", w.toFixed(2), "W");
-        customChargeResults.forEach(charge => addCalcRow("Add " + charge.name + " @ " + charge.rate + "%", charge.amount.toFixed(2)));
+        if (hasOverheadBase) {
+          addCalcRow("TOTAL W", w.toFixed(2), "W");
+          customChargeResults.forEach(charge => addCalcRow("Add " + charge.name + " @ " + charge.rate + "%", charge.amount.toFixed(2)));
+        }
         addCalcRow("Cost of " + Number(baseQty).toFixed(2) + " " + unit, finalTotalAmt.toFixed(2));
         addCalcRow("Cost of 1.00 " + unit, calculatedRateNum.toFixed(2));
         addCalcRow("SAY", roundedSayRate);
       } else if (calcMethod === "Modified DSR" && w > 0) {
-        addCalcRow(`TOTAL "W"`, w.toFixed(2), "W");
-        addCalcRow(`Add 1% Water charges on "W${suffix}"`, wc.toFixed(2));
-        addCalcRow(`TOTAL "X"`, x.toFixed(2), "X");
-        addCalcRow(`Add 15% CPOH on "X${suffix}"`, cpoh.toFixed(2));
-        addCalcRow(`TOTAL "Y"`, y.toFixed(2), "Y");
-        addCalcRow(`Add Cess @ 1% on "Y${suffix}"`, cess.toFixed(2));
-        addCalcRow(`TOTAL "Z"`, z.toFixed(2), "Z");
-        addCalcRow(`Add GST @ 18% on "Z${suffix}"`, gst.toFixed(2));
+        if (hasOverheadBase) {
+          addCalcRow(`TOTAL "W"`, w.toFixed(2), "W");
+          addCalcRow(`Add 1% Water charges on "W${suffix}"`, wc.toFixed(2));
+          addCalcRow(`TOTAL "X"`, x.toFixed(2), "X");
+          addCalcRow(`Add 15% CPOH on "X${suffix}"`, cpoh.toFixed(2));
+          addCalcRow(`TOTAL "Y"`, y.toFixed(2), "Y");
+          addCalcRow(`Add Cess @ 1% on "Y${suffix}"`, cess.toFixed(2));
+          addCalcRow(`TOTAL "Z"`, z.toFixed(2), "Z");
+          addCalcRow(`Add GST @ 18% on "Z${suffix}"`, gst.toFixed(2));
+        }
         addCalcRow(`Cost of ${Number(baseQty).toFixed(2)} ${unit}`, finalTotalAmt.toFixed(2));
         addCalcRow(`Cost of 1.00 ${unit}`, calculatedRateNum.toFixed(2));
         addCalcRow(`SAY`, roundedSayRate);
@@ -785,6 +795,7 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                         {/* STRICT FINANCIAL ROWS */}
                         {calcMethod === "Conventional DSR" && w > 0 && (
                           <>
+                            {hasOverheadBase && <>
                             <tr className="bg-emerald-50 pointer-events-none">
                               <td className="border border-gray-300 p-2 text-center text-gray-500 font-bold">{rows.length + 1}</td>
                               <td colSpan={6} className="border border-gray-300 p-2 text-emerald-900 font-bold text-right pr-6">TOTAL "W"</td>
@@ -833,6 +844,7 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                               <td className="border border-gray-300 p-2 text-right font-mono text-emerald-700">{cess.toFixed(2)}</td>
                               <td className="border border-gray-300"></td><td className="border border-gray-300"></td>
                            </tr>
+                           </>}
                            <tr className="bg-emerald-100 pointer-events-none">
                               <td className="border border-gray-300 p-2 text-center text-gray-500 font-bold">{rows.length + 9}</td>
                               <td colSpan={6} className="border border-gray-300 p-2 text-emerald-900 font-bold text-right pr-6">Cost of {Number(baseQty).toFixed(2)} {unit}</td>
@@ -856,8 +868,10 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
 
                         {calcMethod === "Custom charges" && w > 0 && (
                           <>
+                            {hasOverheadBase && <>
                             <tr className="bg-emerald-100 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + 1}</td><td colSpan={6} className="border border-gray-300 p-2 text-right font-bold">TOTAL "W"</td><td className="border border-gray-300 p-2 text-right font-mono font-bold">{w.toFixed(2)}</td><td className="border border-gray-300">W</td><td className="border border-gray-300"></td></tr>
                             {customChargeResults.map((charge, index) => <React.Fragment key={charge.id}><tr className="bg-emerald-50 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + index + 2}</td><td colSpan={6} className="border border-gray-300 p-2 text-right">Add {charge.name} @ {charge.rate}% {excludeAMarkedItems && suffix ? "(excluding A-marked amount)" : "on running total"}</td><td className="border border-gray-300 p-2 text-right font-mono">{charge.amount.toFixed(2)}</td><td className="border border-gray-300"></td><td className="border border-gray-300"></td></tr>{index < customChargeResults.length - 1 && <tr className="bg-emerald-100 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + index + 3}</td><td colSpan={6} className="border border-gray-300 p-2 text-right font-bold">TOTAL after {charge.name}</td><td className="border border-gray-300 p-2 text-right font-mono">{charge.totalAfter.toFixed(2)}</td><td className="border border-gray-300">{"C" + (index + 1)}</td><td className="border border-gray-300"></td></tr>}</React.Fragment>)}
+                            </>}
                             <tr className="bg-emerald-100 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + customChargeResults.length + 2}</td><td colSpan={6} className="border border-gray-300 p-2 text-right font-bold">Cost of {Number(baseQty).toFixed(2)} {unit}</td><td className="border border-gray-300 p-2 text-right font-mono font-bold">{finalTotalAmt.toFixed(2)}</td><td></td><td></td></tr>
                             <tr className="bg-emerald-50 pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + customChargeResults.length + 3}</td><td colSpan={6} className="border border-gray-300 p-2 text-right">Cost of 1.00 {unit}</td><td className="border border-gray-300 p-2 text-right font-mono">{calculatedRateNum.toFixed(2)}</td><td></td><td></td></tr>
                             <tr className="bg-emerald-600 text-white pointer-events-none"><td className="border border-gray-300 p-2 text-center">{rows.length + customChargeResults.length + 4}</td><td colSpan={6} className="border border-gray-300 p-2 text-right font-bold">SAY</td><td className="border border-gray-300 p-2 text-right font-mono font-bold">{roundedSayRate}</td><td></td><td></td></tr>
@@ -866,6 +880,7 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
 
                         {calcMethod === "Modified DSR" && w > 0 && (
                           <>
+                            {hasOverheadBase && <>
                             <tr className="bg-emerald-50 pointer-events-none">
                               <td className="border border-gray-300 p-2 text-center text-gray-500 font-bold">{rows.length + 1}</td>
                               <td colSpan={6} className="border border-gray-300 p-2 text-emerald-900 font-bold text-right pr-6">TOTAL "W"</td>
@@ -914,6 +929,7 @@ export default function CreateNSR({ onAddNSR, onClose, rates = [], initialData =
                               <td className="border border-gray-300 p-2 text-right font-mono text-emerald-700">{gst.toFixed(2)}</td>
                               <td className="border border-gray-300"></td><td className="border border-gray-300"></td>
                            </tr>
+                           </>}
                            <tr className="bg-emerald-100 pointer-events-none">
                               <td className="border border-gray-300 p-2 text-center text-gray-500 font-bold">{rows.length + 9}</td>
                               <td colSpan={6} className="border border-gray-300 p-2 text-emerald-900 font-bold text-right pr-6">Cost of {Number(baseQty).toFixed(2)} {unit}</td>

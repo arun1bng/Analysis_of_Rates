@@ -1,3 +1,4 @@
+import { buildHierarchicalRows } from "../utils/dsrHierarchy";
 import React, { useState, useEffect } from "react";
 
 const HighlightText = ({ text, query, highlightClass }: { text: string, query: string, highlightClass: string }) => {
@@ -263,28 +264,6 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
     setMatchIdx(nextIdx);
   };
 
-  // Upgraded Ancestor fetcher that accurately honors nested numerical arrays
-  const getAncestors = (code: string) => {
-    if (!code || !rates) return [];
-    const parts = code.toString().split('.');
-    const ancestors = [];
-    let current = "";
-    for (let i = 0; i < parts.length - 1; i++) {
-        current += (i === 0 ? parts[i] : "." + parts[i]);
-        // Strict .toString() coercion ensures 8.1 isn't lost due to float mismatches
-        const match = rates.find((r: any) => r.code?.toString() === current);
-        if (match) ancestors.push({ code: match.code.toString(), description: match.description });
-    }
-    return ancestors;
-  };
-
-  const toggleItemSelect = (code: string) => {
-    const newSet = new Set(selectedItemsForDelete);
-    if (newSet.has(code)) newSet.delete(code);
-    else newSet.add(code);
-    setSelectedItemsForDelete(newSet);
-  };
-
   const SH_NAMES: Record<string, string> = {
     "1": "SH 1: CARRIAGE OF MATERIALS", "2": "SH 2: EARTH WORK", "3": "SH 3: MORTARS", "4": "SH 4: CONCRETE WORK",
     "5": "SH 5: REINFORCED CEMENT CONCRETE", "6": "SH 6: BRICK WORK", "7": "SH 7: STONE WORK", "8": "SH 8: MARBLE AND GRANITE WORK",
@@ -292,18 +271,18 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
     "14": "SH 14: REPAIRS TO BUILDINGS", "15": "SH 15: DISMANTLING AND DEMOLITION", "16": "SH 16: ROAD WORK", "17": "SH 17: SANITARY INSTALLATIONS",
     "18": "SH 18: WATER SUPPLY", "19": "SH 19: DRAINAGE", "20": "SH 20: PILE WORK", "21": "SH 21: ALUMINIUM WORK", "22": "SH 22: WATER PROOFING",
     "23": "SH 23: STRUCTURAL STEEL & METAL WORKS", "24": "SH 24: BUILDING MAINTENANCE", "25": "SH 25: ROAD & PAVEMENT REPAIRS",
-    "26": "SH 26: WATER SUPPLY & SANITARY FITTINGS", "49": "SH 49: SPECIAL ARs / Sub ARs (NOT IN DSR)", 
+    "26": "SH 26: WATER SUPPLY & SANITARY FITTINGS", "49": "SH 49: SPECIAL ARs / Sub ARs (NOT IN DSR)",
     "50": "SH 50: MODIFIED DSR ITEMS (mDSR)", "51": "SH 51: NON-SCHEDULE ITEMS (NS)"
   };
-
   const getSHName = (code: string) => {
-    const prefix = code?.toString().split('.')[0] || "1";
+    const prefix = code?.toString().split(".")[0] || "1";
     return SH_NAMES[prefix] || `SH ${prefix}: GENERAL WORK`;
   };
-
-  const extractSHNum = (shName: string) => {
-    const match = shName.match(/SH (\d+)/);
-    return match ? parseInt(match[1]) : 999;
+  const extractSHNum = (name: string) => Number(name.match(/SH (\d+)/)?.[1] || 999);
+  const toggleItemSelect = (code: string) => {
+    const next = new Set(selectedItemsForDelete);
+    if (next.has(code)) next.delete(code); else next.add(code);
+    setSelectedItemsForDelete(next);
   };
 
   const sortCodes = (a: string, b: string) => {
@@ -334,6 +313,16 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
     groupedBySH[sh][safeCode].push(row);
     flatRowIds.push(row.id);
   });
+
+  const hierarchyInput = Object.entries(groupedBySH).flatMap(([, items]) =>
+    Object.entries(items).map(([itemCode, rows]) => ({
+      ...(rows[0] || {}),
+      itemCode,
+      description: rates.find((rate: any) => String(rate.code) === itemCode)?.description ?? rows[0]?.description ?? "",
+    })),
+  );
+  const hierarchyRows = buildHierarchicalRows(hierarchyInput, rates);
+  const hierarchyItemByCode = new Map(hierarchyRows.filter((row) => row.isItem).map((row) => [row.itemCode, row]));
 
   const sortedSHNames = Object.keys(groupedBySH).sort((a, b) => extractSHNum(a) - extractSHNum(b));
 
@@ -417,11 +406,14 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
             ) : (
               sortedSHNames.map((shName, shIdx) => {
                 const itemsObj = groupedBySH[shName];
-                const shIndex = shIdx + 1; 
+                const sectionCode = Object.keys(itemsObj)[0]?.split(".")[0] || "1";
+                const sectionRows = hierarchyRows.filter((row) => row.sectionCode === sectionCode);
+                const sectionHeader = sectionRows.find((row) => row.isSubhead);
+                const shIndex = Number(sectionHeader?.serialNo || shIdx + 1); 
                 
                 let counters = [0, 0, 0, 0, 0, 0];
                 let currentPath: string[] = [];
-                const uniqueCodes = Object.keys(itemsObj).sort(sortCodes);
+                const uniqueCodes = Object.keys(itemsObj).filter((code) => hierarchyItemByCode.has(code)).sort(sortCodes);
 
                 return (
                   <React.Fragment key={shName}>
@@ -433,7 +425,7 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
                       </td>
                       <td className="p-3 text-center font-bold text-amber-500 text-base border-r border-slate-700/50">{shIndex}</td>
                       <td className="p-3 text-center font-mono font-bold text-blue-400 text-base border-r border-slate-700/50">{extractSHNum(shName)}</td>
-                      <td colSpan={10} className="p-3 font-bold uppercase tracking-widest text-slate-300 text-base">{shName}</td>
+                      <td colSpan={10} className="p-3 font-bold uppercase tracking-widest text-slate-300 text-base">{sectionHeader?.description || shName}</td>
                     </tr>
 
                     {uniqueCodes.map((itemCode) => {
@@ -448,7 +440,9 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
 
                       const multiCount = multiRowCounts[itemCode] || 2;
                       
-                      const ancestors = getAncestors(itemCode);
+                      const ancestors = sectionRows
+                        .filter((row) => row.isParent && !row.isSubhead && itemCode.startsWith(`${row.itemCode}.`))
+                        .map((row) => ({ code: row.itemCode, description: row.description, serialNo: row.serialNo }));
                       let divergeIdx = 0;
                       while (divergeIdx < ancestors.length && divergeIdx < currentPath.length && ancestors[divergeIdx].code === currentPath[divergeIdx]) {
                           divergeIdx++;
@@ -458,10 +452,7 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
                       const rowsToRender: any[] = [];
 
                       newAncestors.forEach((anc, i) => {
-                          const depth = divergeIdx + i;
-                          counters[depth]++;
-                          for (let j = depth + 1; j < counters.length; j++) counters[j] = 0;
-                          const sl = `${shIndex}` + counters.slice(0, depth + 1).map(c => `.${c}`).join('');
+                          const sl = anc.serialNo;
 
                           rowsToRender.push(
                               <tr className="bg-slate-900/50 border-b border-slate-800" key={`anc-${anc.code}`}>
@@ -479,10 +470,7 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
                       });
 
                       currentPath = [...ancestors.map(a => a.code), itemCode];
-                      const leafDepth = ancestors.length;
-                      counters[leafDepth]++;
-                      for (let j = leafDepth + 1; j < counters.length; j++) counters[j] = 0;
-                      const slLeaf = `${shIndex}` + counters.slice(0, leafDepth + 1).map(c => `.${c}`).join('');
+                      const slLeaf = hierarchyItemByCode.get(itemCode)?.serialNo || `${shIndex}`;
 
                       const isItemSelected = selectedItemsForDelete.has(itemCode);
                       
@@ -505,7 +493,7 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
                             <HighlightText text={itemCode} query={searchQuery} highlightClass="msmt-highlight" />
                           </td>
                           <td className="p-3 text-slate-200 leading-relaxed text-justify text-base border-r border-slate-700/50 align-top break-words max-w-xl">
-                            <HighlightText text={baseItem.description || ""} query={searchQuery} highlightClass="msmt-highlight" />
+                            <HighlightText text={hierarchyItemByCode.get(itemCode)?.description || baseItem.description || ""} query={searchQuery} highlightClass="msmt-highlight" />
                           </td>
                           <td colSpan={9} className="p-2 align-bottom border-r border-slate-700/50">
                             <div className="flex items-center justify-end gap-2 w-full h-full">

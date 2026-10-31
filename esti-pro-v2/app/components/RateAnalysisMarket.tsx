@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { getSerialNumbers } from "./RateAnalysisDSR";
 
 const CUSTOM_CHARGES_STORAGE_KEY = "esti-pro-nsr-custom-charges-v1";
@@ -12,6 +12,36 @@ const isNSItem = (code: string) => /^51(?:\.|$)/.test(String(code || "").trim())
 const singleLetterMark = (value: unknown) => /^[A-Z]$/i.test(String(value ?? "").trim()) ? String(value).trim().toUpperCase() : "";
 const normalizedCode = (value: unknown) => String(value ?? "").trim().replace(/\*+$/, "").trim();
 const codeFamily = (value: unknown) => Number(/^([0-9]+)/.exec(String(value || "").trim())?.[1] || Number.MAX_SAFE_INTEGER);
+const DSR_SUBHEAD_NAMES: Record<string, string> = {
+  "1": "Carriage of materials", "2": "Earth work", "3": "Mortars", "4": "Concrete work",
+  "5": "Reinforced cement concrete", "6": "Brick work", "7": "Stone work", "8": "Marble and granite work",
+  "9": "Wood and P.V.C. work", "10": "Steel work", "11": "Flooring", "12": "Roofing",
+  "13": "Finishing", "14": "Repairs to buildings", "15": "Dismantling and demolition",
+  "16": "Road work", "17": "Sanitary installations", "18": "Water supply", "19": "Drainage",
+  "20": "Pile work", "21": "Aluminium work", "22": "Water proofing",
+  "23": "Structural steel & metal works", "24": "Building maintenance", "25": "Road & pavement repairs",
+  "26": "Water supply & sanitary fittings",
+};
+function getDSRReferenceDescription(codeValue: unknown, ratesByCode: Map<string, any>, rates: any[]) {
+  const code = String(codeValue ?? "").trim();
+  if (!/^\d+(?:\.\d+)+$/.test(code)) return null;
+  const family = code.split(".")[0];
+  const familyNumber = Number(family);
+  if (familyNumber < 1 || familyNumber > 26) return null;
+
+  const subhead = ratesByCode.get(family)
+    ?? rates.find(rate => normalizedCode(rate.code) === family);
+  const rawName = String(subhead?.description ?? subhead?.item_description ?? "").trim();
+  const cleanedName = rawName
+    .replace(/^SH\s*\d*\s*[:.-]?\s*/i, "")
+    .replace(new RegExp(`^${family}\\s*[:.-]?\\s*`), "")
+    .trim();
+  const subheadName = cleanedName
+    ? cleanedName.charAt(0).toUpperCase() + cleanedName.slice(1).toLowerCase()
+    : DSR_SUBHEAD_NAMES[family] || family;
+
+  return `Rate as per item no. ${code} of SH: ${subheadName}`;
+}
 function compareItemCodes(left: string, right: string) {
   const a = left.match(/\d+|[a-z]+/gi) || [];
   const b = right.match(/\d+|[a-z]+/gi) || [];
@@ -63,8 +93,11 @@ function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA
     const rate = baseQty > 0 ? total / baseQty : 0;
     add(`Cost of ${baseQty.toFixed(2)} ${unit}`, total);
     add(`Cost of 1.00 ${unit}`, rate);
-    add("Say (Market Rate)", Math.round(rate * 20) / 20);
+    const finalSayRate = Math.round(rate * 20) / 20;
+    add("Say (Market Rate)", finalSayRate);
+    return finalSayRate;
   };
+  let finalSayRate = 0;
   if (amount > 0 && exemptOverheads) {
     add('TOTAL "W"', w, "W");
     const baseRow = details.find(row => /^DETAILS\s+OF\s+COST\s+(?:FOR|OF)\s+([\d.]+)/i.test(String(row.description || "")));
@@ -72,7 +105,8 @@ function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA
     const baseQty = Number(qtyMatch?.[1]) || 1;
     const rate = baseQty > 0 ? total / baseQty : 0;
     add(`Cost of 1.00 ${unit}`, rate);
-    add("Say (Market Rate)", Math.round(rate * 20) / 20);
+    finalSayRate = Math.round(rate * 20) / 20;
+    add("Say (Market Rate)", finalSayRate);
   } else if (amount > 0 && method === "Conventional DSR" && base(w) > 0) {
     add('TOTAL "W"', w, "W");
     const water = base(w) * 0.01; add(`Add 1% Water charges on "W${suffix}"`, water); x = w + water; total = x;
@@ -110,13 +144,13 @@ function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA
     }
   }
   if (amount > 0) {
-    pushCostAndSayRows();
-    return { rows: [...details, ...financial], total };
+    if (!exemptOverheads) finalSayRate = pushCostAndSayRows();
+    return { rows: [...details, ...financial], total, finalSayRate };
   }
-  return { rows: details, total: 0 };
+  return { rows: details, total: 0, finalSayRate: 0 };
 }
 
-export default function RateAnalysisMarket({ estimateRows, marketRates, rates = [], theme = "dark", projectId = "", customItems = [], analysisSnapshot = {} }: any) {
+export default function RateAnalysisMarket({ estimateRows, marketRates, rates = [], theme = "dark", projectId = "", customItems = [], analysisSnapshot = {}, setJustifiedRates }: any) {
   const [analyses, setAnalyses] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [method, setMethod] = useState("Conventional DSR");
@@ -286,8 +320,47 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
     return result.total > 0 ? result.total / baseQty : null;
   };
 
+  const localFinalRates = useMemo(() => {
+    const computed: Record<string, number> = {};
+    for (const item of uniqueItems) {
+      const code = String(item.itemCode || "").trim();
+      if (!code) continue;
+      const itemData: any = customByCode.get(code) ?? basicRatesByCode.get(normalizedCode(code));
+      const sourceRows = analyses[code] || [];
+      if (isNSItem(code)) {
+        computed[code] = Number(item.rate) || 0;
+        continue;
+      }
+      if (itemData?.isExternalAR || Number(itemData?.is_external_ar) === 1) {
+        computed[code] = Number(itemData.rate ?? item.rate) || 0;
+        continue;
+      }
+      const adjustedRows = sourceRows.filter((row: any) => !isExistingFinancialRow(row)).map((row: any) => {
+        const componentCode = String(row.component_code || row.code || "").trim();
+        if (String(row.row_type || "").toUpperCase() !== "CR" || !componentCode) return row;
+        const nestedRate = /^\d+(?:\.\d+)+$/.test(componentCode) ? resolveScheduleRate(componentCode, new Set([code])) : null;
+        const rate = nestedRate ?? (marketRates[componentCode] === undefined ? null : Number(marketRates[componentCode]));
+        if (rate === null) return row;
+        const quantity = Number(row.quantity);
+        return { ...row, rate, amount: row.quantity !== "" && row.quantity != null && Number.isFinite(quantity) ? quantity * rate : row.amount };
+      });
+      const result = calculateAnalysis(adjustedRows, method, charges, excludeA, itemData?.unit || item.unit || "unit", codeFamily(code) === 3);
+      computed[code] = sourceRows.length ? result.finalSayRate : Number(item.rate) || 0;
+    }
+    return computed;
+  }, [uniqueItems, analyses, customByCode, basicRatesByCode, marketRates, method, charges, excludeA]);
+
+  const prevRatesRef = useRef("");
+  useEffect(() => {
+    const currentString = JSON.stringify(localFinalRates);
+    if (currentString !== prevRatesRef.current) {
+      prevRatesRef.current = currentString;
+      setJustifiedRates?.(localFinalRates);
+    }
+  }, [localFinalRates, setJustifiedRates]);
+
   return (
-    <div className="flex-1 overflow-y-auto p-6 bg-[#0b0f19] text-slate-100 font-sans text-base">
+    <div className="w-full h-full flex flex-col overflow-y-auto p-6 bg-[#0b0f19] text-slate-100 font-sans text-base">
       <div className="flex justify-between items-center mb-6 pb-2 border-b border-slate-800">
         <h2 className="text-base font-bold text-amber-500 uppercase tracking-widest">Rate Analysis (Market)</h2>
         <div className="flex items-center gap-3"><label className="flex items-center gap-2 text-sm font-semibold text-slate-300">Calculation method<select value={method} onChange={event => selectMethod(event.target.value)} className="rounded border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"><option>Conventional DSR</option><option>Modified DSR</option><option>Custom charges</option></select></label><button className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1">📄 Export Market PDF</button></div>
@@ -375,7 +448,12 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
                           const code = row.component_code || row.code || "";
                           const basicRate = basicRatesByCode.get(normalizedCode(code));
                           const componentDescription = String(basicRate?.description ?? descText);
-                          const displayDescription = componentDescription;
+                          const componentType = String(row.row_type || "").trim().toUpperCase();
+                          const isStandardDSRComponent = componentType === "CR"
+                            || (!componentType && /^\d+(?:\.\d+)+$/.test(String(code).trim()));
+                          const displayDescription = isStandardDSRComponent
+                            ? getDSRReferenceDescription(code, basicRatesByCode, rates) || componentDescription
+                            : componentDescription;
                           const mark = String(row.calc_mark ?? row.mark ?? row.reference_mark ?? row.ref ?? "").trim();
                           const unit = row.unit || "";
                           const qty = (row.quantity !== null && row.quantity !== undefined && row.quantity !== '') ? Number(row.quantity).toFixed(3) : "";
