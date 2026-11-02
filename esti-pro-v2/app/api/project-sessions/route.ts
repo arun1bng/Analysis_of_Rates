@@ -3,6 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import Database from "better-sqlite3";
+import {
+  ensureProjectSettingsSchema,
+  getProjectDocumentSettings,
+  removeLegacyHistoryDocumentSettings,
+  saveProjectDocumentSettings,
+} from "../../utils/projectDocumentSettings";
 
 export const runtime = "nodejs";
 
@@ -30,14 +36,26 @@ function ensureSessionSchema(db: Database.Database) {
       session_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  ensureProjectSettingsSchema(db);
 }
 
 function saveSession(db: Database.Database, projectId: string, session: any) {
   ensureSessionSchema(db);
+  const existingSettings = getProjectDocumentSettings(db, projectId);
+  removeLegacyHistoryDocumentSettings(db, projectId);
+  const projectSettings = saveProjectDocumentSettings(db, projectId, {
+    ...existingSettings,
+    ...(session?.projectDetails || {}),
+  });
+  const persistedSession = {
+    ...session,
+    projectDetails: { ...(session?.projectDetails || {}), ...projectSettings },
+    projectSettings,
+  };
   db.prepare("INSERT INTO project_metadata (key,value) VALUES ('estimate_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(projectId);
   db.prepare(`INSERT INTO project_session_state (session_id,payload_json,updated_at) VALUES (?,?,CURRENT_TIMESTAMP)
     ON CONFLICT(session_id) DO UPDATE SET payload_json=excluded.payload_json,updated_at=CURRENT_TIMESTAMP`)
-    .run(projectId, JSON.stringify(session));
+    .run(projectId, JSON.stringify(persistedSession));
   const marketRates = session?.marketRates && typeof session.marketRates === "object" ? Object.entries(session.marketRates) : [];
   db.prepare("DELETE FROM project_market_rates").run();
   const saveRate = db.prepare("INSERT INTO project_market_rates (code,market_rate) VALUES (?,?)");
@@ -57,6 +75,7 @@ function saveSession(db: Database.Database, projectId: string, session: any) {
       analysis_json: JSON.stringify(item.isExternalAR ? [] : Array.isArray(item.analysisRows) ? item.analysisRows : []),
       is_external_ar: item.isExternalAR || Number(item.is_external_ar) === 1 ? 1 : 0 });
   }
+  return persistedSession;
 }
 
 export async function GET(request: Request) {
@@ -91,6 +110,22 @@ export async function GET(request: Request) {
   }
 
   const sessionId = normalizeId(url.searchParams.get("sessionId"));
+  if (action === "settings") {
+    if (!sessionId) return NextResponse.json({ error: "A project ID is required." }, { status: 400 });
+    const file = databasePath(sessionId);
+    if (!fs.existsSync(file)) return NextResponse.json({ error: "The project database could not be found." }, { status: 404 });
+    let db: Database.Database | undefined;
+    try {
+      db = new Database(file);
+      ensureSessionSchema(db);
+      const settings = getProjectDocumentSettings(db, sessionId);
+      removeLegacyHistoryDocumentSettings(db, sessionId);
+      return NextResponse.json({ projectId: sessionId, settings });
+    } catch (error) {
+      console.error("Project document settings load failed:", error);
+      return NextResponse.json({ error: "Could not load this project's document settings." }, { status: 500 });
+    } finally { db?.close(); }
+  }
   if (!tempIdPattern.test(sessionId)) return NextResponse.json({ error: "A valid temporary session ID is required." }, { status: 400 });
   const file = databasePath(sessionId);
   if (!fs.existsSync(file)) return NextResponse.json({ error: "The temporary estimate file could not be found." }, { status: 404 });
@@ -118,8 +153,8 @@ export async function POST(request: Request) {
       const sessionId = `TEMP-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
       const session = { ...(body.session || {}), projectDetails: { ...(body.session?.projectDetails || {}), estimateId: sessionId } };
       db = new Database(databasePath(sessionId));
-      saveSession(db, sessionId, session);
-      return NextResponse.json({ success: true, sessionId, session });
+      const persistedSession = saveSession(db, sessionId, session);
+      return NextResponse.json({ success: true, sessionId, session: persistedSession });
     }
 
     if (action === "autosave") {
@@ -129,8 +164,8 @@ export async function POST(request: Request) {
       if (tempIdPattern.test(sessionId) && !fs.existsSync(file)) return NextResponse.json({ error: "This temporary session has already been moved or closed." }, { status: 409 });
       db = new Database(file);
       db.pragma("busy_timeout = 5000");
-      saveSession(db, sessionId, body.session);
-      return NextResponse.json({ success: true, sessionId });
+      const persistedSession = saveSession(db, sessionId, body.session);
+      return NextResponse.json({ success: true, sessionId, projectSettings: persistedSession.projectSettings });
     }
 
     if (action === "save-as") {
@@ -154,11 +189,19 @@ export async function POST(request: Request) {
       db = new Database(targetFile);
       db.pragma("busy_timeout = 5000");
       ensureSessionSchema(db);
-      if (sourceId !== targetId) db.prepare("DELETE FROM project_session_state WHERE session_id=?").run(sourceId);
-      saveSession(db, targetId, session);
+      const hasHistoryEstimateRecord = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='estimates'").get();
+      if (hasHistoryEstimateRecord) {
+        db.prepare("UPDATE estimates SET project_id = ?, name_of_work = ?, updated_at = CURRENT_TIMESTAMP WHERE project_id = ?")
+          .run(targetId, String(session.projectDetails?.nameOfWork || ""), sourceId);
+      }
+      if (sourceId !== targetId) {
+        db.prepare("DELETE FROM project_session_state WHERE session_id=?").run(sourceId);
+        db.prepare("DELETE FROM project_settings WHERE project_id=?").run(sourceId);
+      }
+      const persistedSession = saveSession(db, targetId, session);
       db.close(); db = undefined;
       if (tempIdPattern.test(sourceId)) fs.unlinkSync(sourceFile);
-      return NextResponse.json({ success: true, projectId: targetId, filename: path.basename(targetFile), session });
+      return NextResponse.json({ success: true, projectId: targetId, filename: path.basename(targetFile), session: persistedSession });
     }
 
     return NextResponse.json({ error: "Choose create-temp, autosave, or save-as." }, { status: 400 });
@@ -166,6 +209,9 @@ export async function POST(request: Request) {
     db?.close();
     if (copiedFile && fs.existsSync(copiedFile)) {
       try { fs.unlinkSync(copiedFile); } catch (cleanupError) { console.error("Could not clean up incomplete Save As file:", cleanupError); }
+    }
+    if (error instanceof Error && /must be text|is too long|logo usage preference/i.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
     console.error("Project session operation failed:", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Project session operation failed." }, { status: 500 });

@@ -1,0 +1,17 @@
+export const DEFAULT_HISTORY_NOTE_TEXT = [
+  "1. This estimate is valid for one (01) year only from the date of submission.",
+  "2. The quantity, cost and time projected in the preliminary estimate are liable for revision due to escalation in the cost of construction or changes in specification, scope, area or design. A revised estimate shall be submitted if expenditure is expected to exceed the A/A & E/S amount by more than 10%.",
+  "3. Execution of the work will depend upon receipt of funds through authorization or allocation in time during the relevant financial years.",
+  "4. If sanction is received after the month of November, actual execution of the work shall be taken up in the next financial year.",
+  "5. The architectural, structural and service drawings and cost estimate shall remain the property of CPWD. The client shall not entrust the work to another agency or use these drawings and estimates for execution by an agency other than CPWD.",
+  "6. After receipt of A/A & E/S from the client department, CPWD will prepare and submit the detailed architectural drawings and service plans to the Local Bodies (including for environmental clearance) whose approvals are required before construction. These independent bodies are outside CPWD's control, and the time required for their approvals is not included in the construction period. The client department may also need to pursue early approval.",
+  "7. CPWD does not bind itself to complete the work within the estimated cost. A revised estimate will be submitted when the scope changes or there is a deviation in quantities executed.",
+  "8. Disputes arising out of the contract shall be subject to arbitration as provided in the contract agreement. CPWD will defend the proceedings and have the award examined by the appropriate authority. The competent authority's decision to accept or challenge the award will be binding on the client department.",
+  "9. CPWD has no funds of its own for investing in the work. The client department shall ensure that adequate funds are available with CPWD. If funds are not provided as required, CPWD may need to suspend or abandon the work, and the client department shall be responsible for the resulting consequences, including contractor claims for compensation or damages. Additional funds required shall be provided by the client department against revised estimates submitted by CPWD.",
+  "10. The client department shall promptly provide funds for amounts decreed by a Court of Law or Tribunal, or awarded by an Arbitrator in relation to the work, irrespective of whether it is a party to the proceedings. These payments shall be in addition to payments to contractors for execution of the work.",
+  "11. The client department shall assist CPWD by:",
+  "a. Providing a site for the contractor's labour huts free of cost.",
+  "b. Providing free access to the site for the contractor's materials and labour.",
+  "c. Providing an electricity connection for execution of the work on payment of usual charges.",
+  "d. Obtaining sanction and release of load from the concerned Electricity Board or Authority.",
+].join("\n");

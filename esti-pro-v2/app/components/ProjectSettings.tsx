@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 
 export default function ProjectSettings({ projectDetails, setProjectDetails, setActiveTab, setEstimateSubTab, theme }: any) {
+  const [documentSettingsTab, setDocumentSettingsTab] = useState<"header" | "signatories">("header");
 
   const EPF_ESI_RATES: Record<string, { epf: string, esi: string }> = {
     "Buildings": { epf: "3.125", esi: "0.8125" },
@@ -85,6 +86,111 @@ export default function ProjectSettings({ projectDetails, setProjectDetails, set
           />
         </div>
 
+        <section className="mb-8 rounded-lg border border-slate-200 bg-white p-5">
+          <h3 className="mb-4 border-b border-slate-200 pb-2 font-bold uppercase tracking-widest text-slate-800">
+            Document Header &amp; Signatories
+          </h3>
+          <div className="mb-5 flex gap-2 border-b border-slate-200">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={documentSettingsTab === "header"}
+              onClick={() => setDocumentSettingsTab("header")}
+              className={`border-b-2 px-4 py-2 text-sm font-bold ${documentSettingsTab === "header" ? "border-blue-600 text-blue-700" : "border-transparent text-slate-500 hover:text-slate-800"}`}
+            >
+              Header Details
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={documentSettingsTab === "signatories"}
+              onClick={() => setDocumentSettingsTab("signatories")}
+              className={`border-b-2 px-4 py-2 text-sm font-bold ${documentSettingsTab === "signatories" ? "border-blue-600 text-blue-700" : "border-transparent text-slate-500 hover:text-slate-800"}`}
+            >
+              Footer / Signatories Details
+            </button>
+          </div>
+
+          {documentSettingsTab === "header" ? (
+            <div role="tabpanel">
+              <p className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-600">Use CPWD Logos at top in:</p>
+              <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-700">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="logoUsagePreference"
+                    value="ALL_SHEETS"
+                    checked={projectDetails.logoUsagePreference === "ALL_SHEETS"}
+                    onChange={() => handleUpdate("logoUsagePreference", "ALL_SHEETS")}
+                  />
+                  All Sheets (Measurement, Abstracts, History)
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="logoUsagePreference"
+                    value="HISTORY_SHEET_ONLY"
+                    checked={projectDetails.logoUsagePreference === "HISTORY_SHEET_ONLY"}
+                    onChange={() => handleUpdate("logoUsagePreference", "HISTORY_SHEET_ONLY")}
+                  />
+                  Only History Sheet
+                </label>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">State</label>
+                  <input type="text" value={projectDetails.state} onChange={event => handleUpdate("state", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">Division</label>
+                  <input type="text" value={projectDetails.division} onChange={event => handleUpdate("division", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">Branch</label>
+                  <input type="text" value={projectDetails.branch} onChange={event => handleUpdate("branch", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">Sub Division</label>
+                  <input type="text" value={projectDetails.subDivision} onChange={event => handleUpdate("subDivision", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div role="tabpanel">
+              <div className="mb-4 grid grid-cols-2 gap-4">
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">Left AE / JE / SOH Title</label>
+                  <input type="text" value={projectDetails.leftAETitle} onChange={event => handleUpdate("leftAETitle", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">Left AE / JE / SOH Office</label>
+                  <input type="text" value={projectDetails.leftAEOffice} onChange={event => handleUpdate("leftAEOffice", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+              </div>
+              <div className="mb-4 grid grid-cols-2 gap-4">
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">Right AE / AE (P) / DOH Title</label>
+                  <input type="text" value={projectDetails.rightAETitle} onChange={event => handleUpdate("rightAETitle", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">Right AE / AE (P) / DOH Office</label>
+                  <input type="text" value={projectDetails.rightAEOffice} onChange={event => handleUpdate("rightAEOffice", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+              </div>
+              <div className="mb-4 grid grid-cols-2 gap-4">
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">EE / EE &amp; SM(C) / DD(H) Title</label>
+                  <input type="text" value={projectDetails.eeTitle} onChange={event => handleUpdate("eeTitle", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="mb-1 text-xs font-bold text-slate-700">EE / EE &amp; SM(C) / DD(H) Office</label>
+                  <input type="text" value={projectDetails.eeOffice} onChange={event => handleUpdate("eeOffice", event.target.value)} className="rounded border border-slate-300 px-3 py-2 font-semibold outline-none focus:border-blue-500" />
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
         <div className="flex gap-8 border border-slate-200 rounded-lg p-6 bg-slate-50 mb-8">
           <div className="flex-1">
             <h3 className="font-bold text-slate-800 uppercase tracking-widest border-b border-slate-300 pb-2 mb-4">Financial Parameters</h3>
@@ -97,6 +203,14 @@ export default function ProjectSettings({ projectDetails, setProjectDetails, set
               <div className="flex flex-col">
                 <label className="font-bold text-slate-700 text-xs mb-1 uppercase">GST MODIFICATION FACTOR</label>
                 <input type="text" value={projectDetails.gstModificationFactor} onChange={(e) => handleUpdate('gstModificationFactor', e.target.value)} className="border border-slate-300 rounded px-3 py-1.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all font-semibold" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="flex flex-col">
+                <label className="font-bold text-slate-700 text-xs mb-1 uppercase">TIME LIMIT (MONTHS)</label>
+                <input type="number" min="0" step="1" placeholder="Enter months" value={projectDetails.timeLimitMonths ?? ""} onChange={(e) => handleUpdate('timeLimitMonths', e.target.value)} className="border border-slate-300 rounded px-3 py-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all font-semibold" />
+                <p className="mt-1 text-xs text-slate-500">{projectDetails.timeLimitMonths !== "" && Number.isInteger(Number(projectDetails.timeLimitMonths)) && Number(projectDetails.timeLimitMonths) >= 0 ? `${projectDetails.timeLimitMonths} (${numberToWords(Number(projectDetails.timeLimitMonths))}) months` : "The number will be written in words in the exported History Sheet."}</p>
               </div>
             </div>
 
@@ -176,4 +290,21 @@ export default function ProjectSettings({ projectDetails, setProjectDetails, set
       </div>
     </div>
   );
+}
+
+function numberToWords(value: number): string {
+  const small = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  if (value < 20) return small[value];
+  if (value < 100) return `${tens[Math.floor(value / 10)]}${value % 10 ? ` ${small[value % 10]}` : ""}`;
+  if (value < 1000) return `${small[Math.floor(value / 100)]} Hundred${value % 100 ? ` ${numberToWords(value % 100)}` : ""}`;
+  const groups: Array<[number, string]> = [[10000000, "Crore"], [100000, "Lakh"], [1000, "Thousand"]];
+  for (const [divisor, label] of groups) {
+    if (value >= divisor) {
+      const quotient = Math.floor(value / divisor);
+      const remainder = value % divisor;
+      return `${numberToWords(quotient)} ${label}${remainder ? ` ${numberToWords(remainder)}` : ""}`;
+    }
+  }
+  return small[value] || String(value);
 }

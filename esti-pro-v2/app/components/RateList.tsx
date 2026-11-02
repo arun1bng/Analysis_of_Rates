@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { usePageTools } from "./PageToolsContext";
+import { exportTableToExcel } from "../utils/exportTableToExcel";
 
 type RateRow = { code: string; description: string; unit: string; dsrRate: number; carriage: boolean; sl: number };
 type RateGroup = { id: string; title: string; items: RateRow[] };
@@ -71,16 +73,44 @@ function sortRateCodes(a: string, b: string) {
   return Number(a) - Number(b) || a.localeCompare(b);
 }
 
-export default function RateList({ theme = "dark", marketRates, setMarketRates, estimateRows = [], rates = [], projectId = "", onSaveRates }: any) {
+export default function RateList({ theme = "dark", marketRates, setMarketRates, estimateRows = [], selectedCodes = [], rates = [], projectId = "", onSaveRates }: any) {
+  const { registerPageTools } = usePageTools();
+  const findContainerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => registerPageTools("ratelist", {
+    searchContainerRef: findContainerRef,
+    exportActions: [{
+      id: "export-rate-list-excel",
+      label: "📊 Export Rate List Excel",
+      onClick: () => exportTableToExcel(findContainerRef.current, "Rate List", "Rate_List"),
+      className: "bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow",
+    }],
+  }), [registerPageTools]);
   const [analysisRowsByCode, setAnalysisRowsByCode] = useState<Record<string, Record<string, any>[]>>({});
   const [loading, setLoading] = useState(false);
   const [savingRates, setSavingRates] = useState(false);
-  const [groupFilter, setGroupFilter] = useState("All groups");
-  const [searchCode, setSearchCode] = useState("");
   const [draftRates, setDraftRates] = useState<Record<string, string>>({});
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({ sl: 92, code: 128, description: 520, unit: 100, dsr: 150, market: 180 });
-  const [period, setPeriod] = useState("2026-04");
-  const [area, setArea] = useState("A");
+  const [period, setPeriod] = useState("2026-10");
+  const [area, setArea] = useState("B");
+  const editableRateCodeSet = useMemo(() => {
+    const editableCodes = new Set((selectedCodes as string[])
+      .map(normalizeBasicCode)
+      .filter(code => Boolean(categoryForCode(code))));
+    const visited = new Set<string>();
+    const queue = (selectedCodes as string[]).map(code => String(code).trim()).filter(Boolean);
+    while (queue.length) {
+      const parentCode = queue.shift()!;
+      if (visited.has(parentCode)) continue;
+      visited.add(parentCode);
+      for (const row of analysisRowsByCode[parentCode] || []) {
+        const code = normalizeBasicCode(rateAnalysisCode(row));
+        if (!code) continue;
+        if (categoryForCode(code)) editableCodes.add(code);
+        if (isSubAnalysis(row) && !visited.has(code)) queue.push(code);
+      }
+    }
+    return editableCodes;
+  }, [selectedCodes, analysisRowsByCode]);
 
   const rateByCode = useMemo(() => new Map<string, any>(rates.map((item: any) => [normalizeBasicCode(String(item.code || "")), item])), [rates]);
   const rateGroups = useMemo(() => {
@@ -117,9 +147,7 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
         .map((item, index) => ({ ...item, sl: index + 1 })),
     })) as RateGroup[];
   }, [analysisRowsByCode, rateByCode]);
-  const visibleGroups = rateGroups
-    .filter(group => groupFilter === "All groups" || group.id === groupFilter)
-    .map(group => ({ ...group, items: group.items.filter(item => !searchCode.trim() || item.code.toLowerCase().includes(searchCode.trim().toLowerCase())) }));
+  const visibleGroups = rateGroups;
 
   useEffect(() => {
     let cancelled = false;
@@ -193,6 +221,7 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
       const updates: Record<string, number> = {};
       let skipped = 0;
       for (const item of labourItems) {
+        if (!editableRateCodeSet.has(item.code)) continue;
         if (item.unit.trim().toLowerCase() === "sqm" || ["0162", "0163", "0166"].includes(item.code)) { skipped++; continue; }
         const skillKey = CLC_SKILL_BY_BASE_RATE[item.dsrRate.toFixed(2)];
         const wage = skillKey ? Number(wages[skillKey]) : NaN;
@@ -210,6 +239,7 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
 
   const saveProjectRates = async () => {
     for (const [code, value] of Object.entries(draftRates)) {
+      if (!editableRateCodeSet.has(normalizeBasicCode(code))) continue;
       const raw = String(value).trim();
       if (!raw || raw === ".") continue;
       const parsed = Number(raw);
@@ -222,6 +252,7 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
     const ratesToSave: Record<string, number> = {};
     for (const group of rateGroups) {
       for (const item of group.items) {
+        if (!editableRateCodeSet.has(item.code)) continue;
         const defaultRate = item.carriage ? 0 : item.dsrRate;
         const rawRate = marketRates[item.code] !== undefined ? Number(marketRates[item.code]) : defaultRate;
         if (!Number.isFinite(rawRate) || rawRate < 0) {
@@ -248,28 +279,32 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
   const dark = theme !== "light";
   const card = dark ? "bg-slate-900 border-slate-700" : "bg-white border-slate-200";
   const inputClass = dark ? "bg-slate-950 border-slate-600 text-slate-100 focus:border-blue-500" : "bg-white border-slate-300 text-slate-900 focus:border-blue-500";
-  const visibleItems = visibleGroups.flatMap(group => group.items.map(item => ({ ...item, groupId: group.id })));
+  const visibleItems = visibleGroups.flatMap(group => group.items);
 
   return (
-    <div className={`flex-1 min-h-0 flex flex-col p-6 ${dark ? "bg-[#0b1121] text-slate-100" : "bg-slate-50 text-slate-900"}`}>
+    <div ref={findContainerRef} className={`flex-1 min-h-0 flex flex-col p-6 ${dark ? "bg-[#0b1121] text-slate-100" : "bg-slate-50 text-slate-900"}`}>
       <div className="shrink-0 flex flex-wrap justify-between items-center gap-4 mb-4 pb-4 border-b border-slate-700">
-        <h2 className="text-xl font-bold text-emerald-400 uppercase tracking-wider">Rate List</h2>
-        <div className="flex flex-wrap gap-2 items-center">
-          <select value={groupFilter} onChange={event => setGroupFilter(event.target.value)} className={`border rounded px-3 py-2 text-base outline-none ${inputClass}`} aria-label="Filter rate group">
-            <option>All groups</option>{GROUP_ORDER.map(id => <option key={id} value={id}>{id}</option>)}
-          </select>
-          <input type="search" value={searchCode} onChange={event => setSearchCode(event.target.value)} placeholder="Search item code..." className={`border rounded px-3 py-2 text-base outline-none w-52 ${inputClass}`} />
-          <button onClick={saveProjectRates} disabled={savingRates || loading || !projectId} className="rounded bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50" title={`Save market rates to project ${projectId || "(no active project)"}`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-xl font-bold text-emerald-400 uppercase tracking-wider">Rate List</h2>
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <span>CLC period</span>
+            <select value={period} onChange={event => setPeriod(event.target.value)} className={`border rounded px-3 py-2 text-base ${inputClass}`}>
+              {CLC_PERIODS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <span>Area</span>
+            <select value={area} onChange={event => setArea(event.target.value)} className={`border rounded px-3 py-2 text-base ${inputClass}`}>
+              <option value="A">A Area</option><option value="B">B Area</option><option value="C">C Area</option>
+            </select>
+          </label>
+          <button onClick={applyCLC} disabled={loading} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded text-sm font-bold shadow">Apply CLC Rates</button>
+        </div>
+        <div className="flex items-center">
+          <button onClick={saveProjectRates} disabled={savingRates || loading || !projectId || !editableRateCodeSet.size} className="rounded bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50" title={`Save market rates to project ${projectId || "(no active project)"}`}>
             {savingRates ? "Saving…" : "Save Rates"}
           </button>
         </div>
-      </div>
-
-      <div className="shrink-0 flex flex-wrap items-end gap-3 mb-4 rounded-lg border border-blue-900/60 bg-blue-950/30 p-4">
-        <div><label className="block text-sm font-semibold mb-1">CLC period</label><select value={period} onChange={event => setPeriod(event.target.value)} className={`border rounded px-3 py-2 text-base ${inputClass}`}>{CLC_PERIODS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
-        <div><label className="block text-sm font-semibold mb-1">Area</label><select value={area} onChange={event => setArea(event.target.value)} className={`border rounded px-3 py-2 text-base ${inputClass}`}><option value="A">A Area</option><option value="B">B Area</option><option value="C">C Area</option></select></div>
-        <button onClick={applyCLC} disabled={loading} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded text-sm font-bold shadow">Apply CLC Rates</button>
-        <p className="text-sm text-slate-400">Labour is matched by DSR base rate; sqm composite labour stays at DSR rate.</p>
       </div>
 
       {loading ? <div className="flex-1 grid place-items-center text-slate-400 text-lg">Loading rate analysis items…</div> : estimateRows.length === 0 ? <div className={`flex-1 grid place-items-center rounded-lg border p-8 text-center text-base ${card}`}>Add DSR or mDSR items to the Measurement Sheet to build the Rate List.</div> : (
@@ -285,13 +320,14 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
                 {group.items.length ? group.items.map(item => {
                   const defaultRate = item.carriage ? 0 : item.dsrRate;
                   const marketRate = marketRates[item.code] !== undefined ? marketRates[item.code] : defaultRate;
-                  return <tr key={item.code} className={dark ? "border-b border-slate-800 hover:bg-slate-800/70" : "border-b border-slate-200 hover:bg-slate-100"}>
+                  const isSelected = editableRateCodeSet.has(item.code);
+                  return <tr data-find-row key={item.code} className={`${dark ? "border-b border-slate-800 hover:bg-slate-800/70" : "border-b border-slate-200 hover:bg-slate-100"} ${isSelected ? "" : "bg-slate-950/30 opacity-50 grayscale"}`}>
                     <td className="p-3 text-center font-bold">{item.sl}</td><td className="p-3 font-mono font-bold text-blue-400">{item.code}</td><td className="p-3 leading-relaxed">{item.description}</td><td className="p-3 text-center text-slate-400">{item.unit}</td><td className="p-3 text-right font-mono font-bold">{item.dsrRate.toFixed(2)}</td>
-                    <td className="p-2"><input type="text" inputMode="decimal" value={draftRates[item.code] ?? String(marketRate)} onChange={event => handleRateChange(item.code, event.target.value, defaultRate)} aria-label={`Market rate for ${item.code}`} className={`w-full border rounded px-3 py-2 text-right font-mono font-bold outline-none focus:ring-1 focus:ring-blue-500 ${inputClass}`} /></td>
+                    <td className="p-2"><input type="text" inputMode="decimal" value={draftRates[item.code] ?? String(marketRate)} onChange={event => handleRateChange(item.code, event.target.value, defaultRate)} disabled={!isSelected} aria-label={`Market rate for ${item.code}`} className={`w-full border rounded px-3 py-2 text-right font-mono font-bold outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500 ${inputClass}`} /></td>
                   </tr>;
                 }) : <tr><td colSpan={6} className="p-5 text-center text-slate-500 italic">No analysed items in this group.</td></tr>}
               </React.Fragment>)}
-              {visibleItems.length === 0 && <tr><td colSpan={6} className="p-5 text-center text-slate-500 italic">No items match the current filter.</td></tr>}
+              {visibleItems.length === 0 && <tr><td colSpan={6} className="p-5 text-center text-slate-500 italic">No analysed items available.</td></tr>}
             </tbody>
           </table>
         </div>

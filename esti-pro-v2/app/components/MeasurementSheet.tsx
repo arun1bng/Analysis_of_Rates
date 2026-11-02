@@ -1,5 +1,6 @@
 import { buildHierarchicalRows } from "../utils/dsrHierarchy";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { exportTableToExcel } from "../utils/exportTableToExcel";
 
 const HighlightText = ({ text, query, highlightClass }: { text: string, query: string, highlightClass: string }) => {
   if (!query || typeof text !== 'string') return <>{text}</>;
@@ -16,6 +17,7 @@ const HighlightText = ({ text, query, highlightClass }: { text: string, query: s
 };
 
 export default function MeasurementSheet({ estimateRows, setEstimateRows, rates, theme = "dark", checkedItems, setCheckedItems }: any) {
+  const exportRootRef = useRef<HTMLDivElement>(null);
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [matchIdx, setMatchIdx] = useState(-1);
@@ -331,7 +333,7 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
     : "";
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 text-slate-100 font-sans text-xs relative">
+    <div ref={exportRootRef} className="flex-1 flex flex-col overflow-hidden bg-slate-950 text-slate-100 font-sans text-xs relative">
       
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[300]">
@@ -369,7 +371,7 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
             </div>
             <button onClick={() => setSearchQuery(searchInput)} className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-white font-bold text-sm border-l border-slate-700">Search</button>
           </div>
-          <button className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 ml-2 text-sm">📊 Meas. Excel</button>
+          <button type="button" onClick={() => exportTableToExcel(exportRootRef.current, "Measurement Sheet", "Measurement_Sheet")} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 ml-2 text-sm">📊 Meas. Excel</button>
           <button className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 Meas. PDF</button>
         </div>
       </div>

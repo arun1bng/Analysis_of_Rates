@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { usePageTools } from "./PageToolsContext";
+import { exportTableToExcel } from "../utils/exportTableToExcel";
 
 type AnalysisRow = Record<string, any>;
 
@@ -28,6 +30,7 @@ function itemFamily(code: unknown) {
 }
 
 function analysisContext(code: unknown): "dsr" | "mdsr" | "ns" | "other" {
+  if (/^(?:NSR|51\.)/i.test(String(code || "").trim())) return "ns";
   const family = itemFamily(code);
   if (family >= 1 && family <= 26) return "dsr";
   if (family === 50) return "mdsr";
@@ -212,13 +215,13 @@ function AnalysisTable({ rows, marketRates, rates, analyses, useMarketRates = fa
       <table className="w-full min-w-[850px] text-left border-collapse text-base">
         <thead className="bg-slate-900 text-slate-300 border-b border-slate-700">
           <tr>
-            <th className="p-3 w-28">Code</th>
-            <th className="p-3">Description</th>
-            <th className="p-3 w-20 text-center">Unit</th>
-            <th className="p-3 w-24 text-right">Qty</th>
-            <th className="p-3 w-28 text-right">Rate (₹)</th>
-            <th className="p-3 w-28 text-right">Amount (₹)</th>
-            <th className="p-3 w-20 text-center">Mark</th>
+            <th className="bg-slate-900 p-3 w-28">Code</th>
+            <th className="bg-slate-900 p-3">Description</th>
+            <th className="bg-slate-900 p-3 w-20 text-center">Unit</th>
+            <th className="bg-slate-900 p-3 w-24 text-right">Qty</th>
+            <th className="bg-slate-900 p-3 w-28 text-right">Rate (₹)</th>
+            <th className="bg-slate-900 p-3 w-28 text-right">Amount (₹)</th>
+            <th className="bg-slate-900 p-3 w-20 text-center">Mark</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800/50">
@@ -240,7 +243,7 @@ function AnalysisTable({ rows, marketRates, rates, analyses, useMarketRates = fa
             const isTotal = /^TOTAL\b/.test(upperDescription) || /^(COST OF|COST FOR|SAY\b)/.test(upperDescription);
 
             return (
-              <tr key={`${row.component_sequence ?? row.id ?? index}-${code}-${index}`} className={`${isHeader ? "bg-slate-900/60 font-bold" : "hover:bg-slate-900/50"} ${isTotal ? "text-emerald-200 font-bold" : ""}`}>
+              <tr data-find-row key={`${row.component_sequence ?? row.id ?? index}-${code}-${index}`} className={`${isHeader ? "bg-slate-900/60 font-bold" : "hover:bg-slate-900/50"} ${isTotal ? "text-emerald-200 font-bold" : ""}`}>
                 <td className="p-3 align-top font-mono text-amber-400 font-semibold">{code}</td>
                 <td className={`p-3 align-top text-slate-200 whitespace-pre-line ${isHeader ? "uppercase tracking-wide" : ""}`}>{description}</td>
                 <td className="p-3 align-top text-center text-slate-300">{row.unit || ""}</td>
@@ -257,7 +260,31 @@ function AnalysisTable({ rows, marketRates, rates, analyses, useMarketRates = fa
   );
 }
 
-export default function RateAnalysisDSR({ estimateRows = [], rates = [], marketRates = {}, analysisSnapshot = {} }: any) {
+export default function RateAnalysisDSR({
+  estimateRows = [],
+  selectedCodes = [],
+  rates = [],
+  marketRates = {},
+  analysisSnapshot = {},
+  focusCode = "",
+  onFocusHandled,
+}: any) {
+  const { registerPageTools } = usePageTools();
+  const findContainerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => registerPageTools("radsr", {
+    searchContainerRef: findContainerRef,
+    exportActions: [{
+      id: "export-ra-pdf",
+      label: "📄 Export RA PDF",
+      onClick: () => window.print(),
+      className: "bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded font-bold shadow",
+    }, {
+      id: "export-ra-excel",
+      label: "📊 Export RA Excel",
+      onClick: () => exportTableToExcel(findContainerRef.current, "Rate Analysis (Estimate)", "Rate_Analysis_Estimate"),
+      className: "bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded font-bold shadow",
+    }],
+  }), [registerPageTools]);
   const [analyses, setAnalyses] = useState<Record<string, AnalysisRow[]>>({});
   const [loading, setLoading] = useState(false);
 
@@ -270,7 +297,7 @@ export default function RateAnalysisDSR({ estimateRows = [], rates = [], marketR
     return [...uniqueByCode.values()].sort((a: AnalysisRow, b: AnalysisRow) => {
     const contextA = analysisContext(a.itemCode);
     const contextB = analysisContext(b.itemCode);
-    const sectionRank = (context: string) => context === "dsr" ? 0 : context === "mdsr" ? 1 : context === "ns" ? 2 : 3;
+    const sectionRank = (context: string) => context === "dsr" ? 0 : context === "ns" ? 2 : 1;
     const rankDifference = sectionRank(contextA) - sectionRank(contextB);
     if (rankDifference) return rankDifference;
     const familyDifference = itemFamily(a.itemCode) - itemFamily(b.itemCode);
@@ -278,39 +305,55 @@ export default function RateAnalysisDSR({ estimateRows = [], rates = [], marketR
     return compareCodes(String(a.itemCode || ""), String(b.itemCode || ""));
     });
   }, [estimateRows]);
+  const selectedCodeSet = useMemo(
+    () => new Set((selectedCodes as string[]).map(code => String(code).trim())),
+    [selectedCodes],
+  );
+  const selectedItems = useMemo(
+    () => orderedItems.filter((item: AnalysisRow) => selectedCodeSet.has(String(item.itemCode || "").trim())),
+    [orderedItems, selectedCodeSet],
+  );
+  const unselectedItems = useMemo(
+    () => orderedItems.filter((item: AnalysisRow) => !selectedCodeSet.has(String(item.itemCode || "").trim())),
+    [orderedItems, selectedCodeSet],
+  );
   const serialNumbers = useMemo(() => getSerialNumbers(estimateRows, rates), [estimateRows, rates]);
   const mainCodes = useMemo(() => new Set(orderedItems.map((item: AnalysisRow) => String(item.itemCode || "").trim())), [orderedItems]);
-  const orderedWithPositions = useMemo(() => orderedItems.map((item: AnalysisRow, index: number) => ({ item, index })), [orderedItems]);
-  const dsrItems = orderedWithPositions.filter(({ item }) => analysisContext(item.itemCode) === "dsr");
-  const modifiedAndNSItems = orderedWithPositions.filter(({ item }) => ["mdsr", "ns"].includes(analysisContext(item.itemCode)));
-  const otherMainItems = orderedWithPositions.filter(({ item }) => analysisContext(item.itemCode) === "other");
-  const subAnalysisSections = useMemo(() => {
-    const contexts: Array<{ id: "dsr" | "mdsr" | "ns" | "other"; title: string }> = [
-      { id: "dsr", title: "DSR Sub A/Rs" },
-      { id: "mdsr", title: "mDSR Sub A/Rs (Market Rates)" },
-      { id: "ns", title: "NS Sub A/Rs (Market Rates)" },
-      { id: "other", title: "Other Sub A/Rs (Market Rates)" },
-    ];
-    return contexts.map(context => {
-      const roots = orderedItems.filter((item: AnalysisRow) => analysisContext(item.itemCode) === context.id);
-      const found = new Set<string>();
+  const subAnalysisGroups = useMemo(() => {
+    const collect = (roots: AnalysisRow[]) => {
+      const beforeNS = new Set<string>();
+      const ns = new Set<string>();
       const visited = new Set<string>();
-      const queue = roots.map((item: AnalysisRow) => String(item.itemCode || "").trim()).filter(Boolean);
+      const queue = roots.map(item => ({
+        code: String(item.itemCode || "").trim(),
+        isNS: analysisContext(item.itemCode) === "ns",
+      })).filter(item => item.code);
       while (queue.length) {
-        const parentCode = queue.shift()!;
-        if (visited.has(parentCode)) continue;
-        visited.add(parentCode);
-        for (const row of analyses[parentCode] || []) {
+        const parent = queue.shift()!;
+        const visitKey = `${parent.isNS ? "ns" : "schedule"}:${parent.code}`;
+        if (visited.has(visitKey)) continue;
+        visited.add(visitKey);
+        for (const row of analyses[parent.code] || []) {
           if (!isSubAnalysisReference(row)) continue;
           const subCode = getRowCode(row);
-          if (!subCode || visited.has(subCode)) continue;
-          if (!mainCodes.has(subCode)) found.add(subCode);
-          queue.push(subCode);
+          if (!subCode) continue;
+          if (!mainCodes.has(subCode)) {
+            if (parent.isNS || analysisContext(subCode) === "ns") ns.add(subCode);
+            else beforeNS.add(subCode);
+          }
+          queue.push({ code: subCode, isNS: parent.isNS || analysisContext(subCode) === "ns" });
         }
       }
-      return { ...context, codes: [...found].sort(compareCodes) };
-    });
-  }, [orderedItems, analyses, mainCodes]);
+      return {
+        beforeNS: [...beforeNS].sort(compareCodes),
+        ns: [...ns].sort(compareCodes),
+      };
+    };
+    return {
+      selected: collect(selectedItems),
+      unselected: collect(unselectedItems),
+    };
+  }, [selectedItems, unselectedItems, analyses, mainCodes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -365,14 +408,23 @@ export default function RateAnalysisDSR({ estimateRows = [], rates = [], marketR
     return () => { cancelled = true; };
   }, [estimateRows, rates, analysisSnapshot]);
 
+  useEffect(() => {
+    if (!focusCode || loading) return;
+    const targetId = `dsr-rate-${String(focusCode).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    const target = document.getElementById(targetId);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    onFocusHandled?.();
+  }, [focusCode, loading, analyses, onFocusHandled]);
+
   const renderMainItem = ({ item, index }: { item: AnalysisRow; index: number }) => {
     const code = String(item.itemCode || "").trim();
     const description = item.description || "";
     const savedRateItem = rates.find((rate: AnalysisRow) => String(rate.code || "").trim() === code);
     const external = isExternalRateItem(savedRateItem);
     return (
-      <section key={`${code}-${item.id ?? index}`} className="border border-slate-800 rounded-xl overflow-hidden bg-[#0b0f19] shadow-xl">
-        <header className="bg-slate-900/70 border-b border-slate-800 p-5">
+      <section id={`dsr-rate-${code.replace(/[^a-zA-Z0-9_-]/g, "-")}`} key={`${code}-${item.id ?? index}`} className="border border-slate-800 rounded-xl overflow-hidden bg-[#0b0f19] shadow-xl">
+        <header data-find-row className="bg-slate-900/70 border-b border-slate-800 p-5">
           <h3 className="text-lg text-amber-400 font-bold mb-3">Item {index + 1} [Sl. No. {serialNumbers.get(code) || item.slNo || index + 1}] [DSR No. {code}] {external && <span className="ml-2 rounded border border-violet-700 bg-violet-900/50 px-2 py-1 align-middle text-xs font-bold text-violet-200">Ext. RA</span>}</h3>
           <p className="text-slate-200 text-base leading-relaxed text-justify whitespace-pre-line">{description}</p>
         </header>
@@ -388,8 +440,8 @@ export default function RateAnalysisDSR({ estimateRows = [], rates = [], marketR
     const external = isExternalRateItem(item);
     const useMarketRates = contextId !== "dsr";
     return (
-      <section key={`${contextId}:${code}`} className="border border-slate-800 rounded-xl overflow-hidden bg-[#0b0f19] shadow-xl">
-        <header className="bg-slate-900/70 border-b border-slate-800 p-4">
+      <section id={`dsr-rate-${code.replace(/[^a-zA-Z0-9_-]/g, "-")}`} key={`${contextId}:${code}`} className="border border-slate-800 rounded-xl overflow-hidden bg-[#0b0f19] shadow-xl">
+        <header data-find-row className="bg-slate-900/70 border-b border-slate-800 p-4">
           <div className="mb-2 text-xs font-bold uppercase tracking-wider text-blue-300">{contextTitle}</div>
           <h3 className="text-lg text-amber-400 font-bold">Sub-Analysis [DSR No. {code}] {external && <span className="ml-2 rounded border border-violet-700 bg-violet-900/50 px-2 py-1 align-middle text-xs font-bold text-violet-200">Ext. RA</span>}</h3>
           {item?.description && <p className="mt-2 text-slate-200 text-base whitespace-pre-line">{item.description}</p>}
@@ -401,11 +453,50 @@ export default function RateAnalysisDSR({ estimateRows = [], rates = [], marketR
     );
   };
 
+  const renderItemGroup = (items: AnalysisRow[], group: { beforeNS: string[]; ns: string[] }, label: string) => {
+    const dsrItems = items.filter(item => analysisContext(item.itemCode) === "dsr");
+    const drItems = items.filter(item => !["dsr", "ns"].includes(analysisContext(item.itemCode)));
+    const nsItems = items.filter(item => analysisContext(item.itemCode) === "ns");
+    return (
+      <div className="space-y-7">
+        <h2 className="text-xl font-bold text-blue-300 uppercase tracking-wide">{label}</h2>
+        {!items.length ? <p className="text-slate-500 italic">No items in this group.</p> : (
+          <>
+            <section className="space-y-5">
+              <h3 className="text-lg font-bold text-blue-200">DSR Items (SH 1–26)</h3>
+              {dsrItems.length ? dsrItems.map((item, index) => renderMainItem({ item, index })) : <p className="text-slate-500 italic">No DSR items.</p>}
+            </section>
+            <section className="space-y-5">
+              <h3 className="text-lg font-bold text-blue-200">DR Items</h3>
+              {drItems.length ? drItems.map((item, index) => renderMainItem({ item, index })) : <p className="text-slate-500 italic">No DR items.</p>}
+            </section>
+            <section className="space-y-5">
+              <h3 className="text-lg font-bold text-blue-200">Sub ARs</h3>
+              {group.beforeNS.length ? group.beforeNS.map(code => {
+                const contextId = analysisContext(code) === "mdsr" ? "mdsr" : "dsr";
+                return renderSubAnalysis(code, contextId, contextId === "mdsr" ? "mDSR Sub A/R" : "Sub A/R");
+              }) : <p className="text-slate-500 italic">No Sub ARs.</p>}
+            </section>
+            <section className="space-y-5">
+              <h3 className="text-lg font-bold text-blue-200">NS Items</h3>
+              {nsItems.length ? nsItems.map((item, index) => renderMainItem({ item, index })) : <p className="text-slate-500 italic">No NS items.</p>}
+            </section>
+            <section className="space-y-5">
+              <h3 className="text-lg font-bold text-blue-200">NS Sub ARs</h3>
+              {group.ns.length ? group.ns.map(code => renderSubAnalysis(code, "ns", "NS Sub A/R")) : <p className="text-slate-500 italic">No NS Sub ARs.</p>}
+            </section>
+          </>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="flex-1 overflow-y-auto p-6 bg-[#0b0f19] text-slate-100 font-sans text-base">
+    <div ref={findContainerRef} className="flex-1 overflow-y-auto p-6 bg-[#0b0f19] text-slate-100 font-sans text-base">
       <div className="flex justify-between items-center mb-6 pb-3 border-b border-slate-800">
         <h2 className="text-xl font-bold text-blue-400 uppercase tracking-widest">Rate Analysis (Estimate)</h2>
-        <button className="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded font-bold shadow">📄 Export RA PDF</button>
+        <div className="flex items-center gap-3">
+        </div>
       </div>
 
       {loading ? (
@@ -414,34 +505,13 @@ export default function RateAnalysisDSR({ estimateRows = [], rates = [], marketR
         <div className="text-center text-slate-400 py-20 italic text-lg">No items in Measurement Sheet to analyze.</div>
       ) : (
         <div className="space-y-8 max-w-7xl mx-auto pb-10">
-          <section className="space-y-5">
-            <h2 className="text-xl font-bold text-blue-300 uppercase tracking-wide">1. DSR Items (SH 1–26)</h2>
-            {dsrItems.length ? dsrItems.map(renderMainItem) : <p className="text-slate-500 italic">No DSR items in the Measurement Sheet.</p>}
-          </section>
-
-          <section className="space-y-5">
-            <h2 className="text-xl font-bold text-blue-300 uppercase tracking-wide">2. DSR Sub A/Rs</h2>
-            {subAnalysisSections[0].codes.length
-              ? subAnalysisSections[0].codes.map(code => renderSubAnalysis(code, "dsr", "DSR Sub A/R"))
-              : <p className="text-slate-500 italic">No DSR sub-analyses are referenced.</p>}
-          </section>
-
-          <section className="space-y-5">
-            <h2 className="text-xl font-bold text-blue-300 uppercase tracking-wide">3. mDSR and NS Items</h2>
-            {modifiedAndNSItems.length ? modifiedAndNSItems.map(renderMainItem) : <p className="text-slate-500 italic">No mDSR or NS items in the Measurement Sheet.</p>}
-            {otherMainItems.length > 0 && <div className="space-y-5 pt-3"><h3 className="text-lg font-bold text-slate-400">Other Selected Items</h3>{otherMainItems.map(renderMainItem)}</div>}
-          </section>
-
-          <section className="space-y-5">
-            <h2 className="text-xl font-bold text-blue-300 uppercase tracking-wide">4. mDSR and NS Sub A/Rs (Market Rates)</h2>
-            {subAnalysisSections.slice(1).map(section => section.codes.length > 0 && (
-              <div key={section.id} className="space-y-5">
-                <h3 className="text-lg font-bold text-violet-300">{section.title}</h3>
-                {section.codes.map(code => renderSubAnalysis(code, section.id, section.title))}
-              </div>
-            ))}
-            {subAnalysisSections.slice(1).every(section => section.codes.length === 0) && <p className="text-slate-500 italic">No mDSR or NS sub-analyses are referenced.</p>}
-          </section>
+          {renderItemGroup(selectedItems, subAnalysisGroups.selected, "Items selected for justification")}
+          <details className="rounded-lg border border-slate-700 bg-slate-900/40">
+            <summary className="cursor-pointer px-4 py-3 font-bold text-slate-300">Items not selected for justification</summary>
+            <div className="space-y-7 p-4 text-slate-400 opacity-70">
+              {renderItemGroup(unselectedItems, subAnalysisGroups.unselected, "Items not selected for justification")}
+            </div>
+          </details>
         </div>
       )}
     </div>

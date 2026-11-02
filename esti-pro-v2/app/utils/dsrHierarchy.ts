@@ -47,6 +47,12 @@ function escapeRegExp(value: string): string {
 
 function cleanDescription(description: unknown, code: string, parentDescriptions: string | string[] = ""): string {
   let text = String(description ?? "").trim();
+  if (code && text.includes(code)) {
+    const parts = text.split(code);
+    text = parts.pop() || text;
+    return text.replace(/^[:\-\s,]+/, "").trim();
+  }
+
   const prefixes = (Array.isArray(parentDescriptions) ? parentDescriptions : [parentDescriptions])
     .map((value) => String(value ?? "").trim())
     .filter(Boolean)

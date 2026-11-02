@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { getSerialNumbers } from "./RateAnalysisDSR";
+import { usePageTools } from "./PageToolsContext";
+import { exportTableToExcel } from "../utils/exportTableToExcel";
 
 const CUSTOM_CHARGES_STORAGE_KEY = "esti-pro-nsr-custom-charges-v1";
 const DEFAULT_CHARGES = [
@@ -8,7 +10,8 @@ const DEFAULT_CHARGES = [
   { id: "cess", name: "Cess", rate: "1" },
   { id: "gst", name: "GST", rate: "18" },
 ];
-const isNSItem = (code: string) => /^51(?:\.|$)/.test(String(code || "").trim());
+const isNonScheduleItem = (value: unknown) => /^(?:NSR|51(?:\.|$))/i.test(String(value || "").trim());
+const isNSItem = (code: string) => isNonScheduleItem(code);
 const singleLetterMark = (value: unknown) => /^[A-Z]$/i.test(String(value ?? "").trim()) ? String(value).trim().toUpperCase() : "";
 const normalizedCode = (value: unknown) => String(value ?? "").trim().replace(/\*+$/, "").trim();
 const codeFamily = (value: unknown) => Number(/^([0-9]+)/.exec(String(value || "").trim())?.[1] || Number.MAX_SAFE_INTEGER);
@@ -62,8 +65,45 @@ function isExistingFinancialRow(row: any) {
   return /^(?:TOTAL(?:\s+["'“‘]?[WXYZ]["'”’]?)?|ADD\s+\d+(?:\.\d+)?\s*%\s+(?:WATER|CPOH|CESS)|ADD\s+(?:GST|CESS)\b|COST\s+(?:OF|FOR)\s+\d|SAY\b|TOTAL\s+MARKET\s+RATE\b)/i.test(description);
 }
 
-function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA: boolean, unit = "unit", exemptOverheads = false) {
-  const details = rows.filter(row => String(row.row_type || "").toUpperCase() !== "CALC_SNAPSHOT").map(row => ({ ...row }));
+function getAnalysisBaseQuantity(rows: any[]) {
+  const firstRowDescription = String(rows.find(row => /DETAILS\s+OF\s+COST\b/i.test(String(row.description || "")))?.description || "");
+  const headerMatch = firstRowDescription.match(/DETAILS\s+OF\s+COST\s+(?:FOR|OF)\s+([\d.]+)/i);
+  let baseQuantity = headerMatch ? Number.parseFloat(headerMatch[1]) : 1;
+
+  if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) baseQuantity = 1;
+  if (baseQuantity === 1) {
+    for (const row of rows) {
+      const description = String(row.description || "");
+      const costRowMatch = description.match(/Cost\s+of\s+([\d.]+)\s+[a-zA-Z]+/i);
+      if (!costRowMatch) continue;
+      const parsedQuantity = Number.parseFloat(costRowMatch[1]);
+      if (Number.isFinite(parsedQuantity) && parsedQuantity > 0 && parsedQuantity !== 1) {
+        baseQuantity = parsedQuantity;
+        break;
+      }
+    }
+  }
+
+  return baseQuantity;
+}
+
+function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA: boolean, unit = "unit", exemptOverheads = false, baseQty = getAnalysisBaseQuantity(rows)) {
+  const details = rows
+    .filter(row => String(row.row_type || "").toUpperCase() !== "CALC_SNAPSHOT")
+    .map(row => {
+      const normalized = { ...row };
+      const rowType = String(row.row_type || "").toUpperCase();
+      const isComponent = rowType === "CR" || rowType === "SCR";
+      if (isComponent && row.quantity !== null && row.quantity !== undefined && row.quantity !== "") {
+        const quantity = Number(row.quantity);
+        if (Number.isFinite(quantity)) normalized.quantity = quantity / baseQty;
+      }
+      if (isComponent && row.amount !== null && row.amount !== undefined && row.amount !== "") {
+        const amount = Number(row.amount);
+        if (Number.isFinite(amount)) normalized.amount = amount / baseQty;
+      }
+      return normalized;
+    });
   const byMark = new Map<string, number>();
   for (const row of details) {
     if (String(row.row_type || "").toUpperCase() !== "CR") continue;
@@ -87,11 +127,8 @@ function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA
   let total = amount;
   let w = amount, x = 0, y = 0, z = 0;
   const pushCostAndSayRows = () => {
-    const baseRow = details.find(row => /^DETAILS\s+OF\s+COST\s+(?:FOR|OF)\s+([\d.]+)/i.test(String(row.description || "")));
-    const qtyMatch = baseRow && /DETAILS\s+OF\s+COST\s+(?:FOR|OF)\s+([\d.]+)/i.exec(String(baseRow.description));
-    const baseQty = Number(qtyMatch?.[1]) || 1;
-    const rate = baseQty > 0 ? total / baseQty : 0;
-    add(`Cost of ${baseQty.toFixed(2)} ${unit}`, total);
+    const rate = total;
+    add(`Cost of ${baseQty.toFixed(2)} ${unit}`, total * baseQty);
     add(`Cost of 1.00 ${unit}`, rate);
     const finalSayRate = Math.round(rate * 20) / 20;
     add("Say (Market Rate)", finalSayRate);
@@ -100,10 +137,7 @@ function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA
   let finalSayRate = 0;
   if (amount > 0 && exemptOverheads) {
     add('TOTAL "W"', w, "W");
-    const baseRow = details.find(row => /^DETAILS\s+OF\s+COST\s+(?:FOR|OF)\s+([\d.]+)/i.test(String(row.description || "")));
-    const qtyMatch = baseRow && /DETAILS\s+OF\s+COST\s+(?:FOR|OF)\s+([\d.]+)/i.exec(String(baseRow.description));
-    const baseQty = Number(qtyMatch?.[1]) || 1;
-    const rate = baseQty > 0 ? total / baseQty : 0;
+    const rate = total;
     add(`Cost of 1.00 ${unit}`, rate);
     finalSayRate = Math.round(rate * 20) / 20;
     add("Say (Market Rate)", finalSayRate);
@@ -150,16 +184,53 @@ function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA
   return { rows: details, total: 0, finalSayRate: 0 };
 }
 
-export default function RateAnalysisMarket({ estimateRows, marketRates, rates = [], theme = "dark", projectId = "", customItems = [], analysisSnapshot = {}, setJustifiedRates }: any) {
+export default function RateAnalysisMarket({
+  estimateRows,
+  marketRates,
+  rates = [],
+  theme = "dark",
+  projectId = "",
+  customItems = [],
+  analysisSnapshot = {},
+  setJustifiedRates,
+  calculationMethod,
+  setCalculationMethod,
+  selectedCodes = [],
+  focusCode = "",
+  isActive = true,
+  onFocusHandled,
+}: any) {
+  const { registerPageTools } = usePageTools();
+  const findContainerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => registerPageTools("ramarket", {
+    searchContainerRef: findContainerRef,
+    exportActions: [{
+      id: "export-market-pdf",
+      label: "📄 Export Market PDF",
+      onClick: () => window.print(),
+      className: "bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow",
+    }, {
+      id: "export-market-excel",
+      label: "📊 Export Market Excel",
+      onClick: () => exportTableToExcel(findContainerRef.current, "Rate Analysis (Market)", "Rate_Analysis_Market"),
+      className: "bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow",
+    }],
+  }), [registerPageTools]);
   const [analyses, setAnalyses] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
-  const [method, setMethod] = useState("Conventional DSR");
+  const [internalMethod, setInternalMethod] = useState("Conventional DSR");
   const [charges, setCharges] = useState<any[]>(DEFAULT_CHARGES);
   const [chargesDraft, setChargesDraft] = useState<any[]>(DEFAULT_CHARGES);
   const [excludeA, setExcludeA] = useState(true);
   const [excludeADraft, setExcludeADraft] = useState(true);
   const [customModalOpen, setCustomModalOpen] = useState(false);
   const [previousMethod, setPreviousMethod] = useState("Conventional DSR");
+  const method = calculationMethod ?? internalMethod;
+  const updateMethod = (nextMethod: string) => {
+    if (setCalculationMethod) setCalculationMethod(nextMethod);
+    else setInternalMethod(nextMethod);
+    localStorage.setItem(`esti-pro-market-method-${String(projectId || "default")}`, nextMethod);
+  };
 
   const customByCode = useMemo(() => new Map(customItems.map((item: any) => [String(item.code), item])), [customItems]);
   const basicRatesByCode = useMemo(() => new Map((rates as any[]).map(item => [normalizedCode(item.code), item])), [rates]);
@@ -173,61 +244,84 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
     return [...uniqueByCode.values()].sort((left, right) => {
       const familyLeft = codeFamily(left.itemCode);
       const familyRight = codeFamily(right.itemCode);
-      const rank = (family: number) => family >= 1 && family <= 26 ? 0 : family === 50 ? 1 : family === 51 ? 2 : 3;
-      return rank(familyLeft) - rank(familyRight) || compareItemCodes(String(left.itemCode), String(right.itemCode));
+      const rank = (item: any, family: number) => family >= 1 && family <= 26 ? 0 : isNonScheduleItem(item.itemCode) ? 2 : 1;
+      return rank(left, familyLeft) - rank(right, familyRight)
+        || familyLeft - familyRight
+        || compareItemCodes(String(left.itemCode), String(right.itemCode));
     });
   }, [estimateRows]);
   const mainItemCodes = useMemo(() => new Set(uniqueItems.map((item: any) => String(item.itemCode || "").trim())), [uniqueItems]);
-  const subAnalysisSections = useMemo(() => {
-    const contexts = [
-      { id: "dsr-sub", title: "2. DSR Sub A/Rs", matches: (family: number) => family >= 1 && family <= 26 },
-      { id: "mdsr-sub", title: "mDSR Sub A/Rs (Market Rates)", matches: (family: number) => family === 50 },
-      { id: "ns-sub", title: "NS Sub A/Rs", matches: (family: number) => family === 51 },
-    ];
-    return contexts.map(context => {
-      const roots = uniqueItems.filter((item: any) => context.matches(codeFamily(item.itemCode))).map((item: any) => String(item.itemCode));
-      const found = new Set<string>();
+  const analysisCards = useMemo(() => {
+    const selectedCodeSet = new Set((selectedCodes as string[]).map(code => String(code).trim()));
+    const selectedItems = uniqueItems.filter((item: any) => selectedCodeSet.has(String(item.itemCode || "").trim()));
+    const unselectedItems = uniqueItems.filter((item: any) => !selectedCodeSet.has(String(item.itemCode || "").trim()));
+    const findRateItem = (code: string) => (rates as any[]).find(rate => normalizedCode(rate.code) === normalizedCode(code)) || { code, description: "", unit: "" };
+    const buildGroupCards = (items: any[]) => {
+      const sortCodes = (left: any, right: any) => compareItemCodes(String(left.itemCode), String(right.itemCode));
+      const dsrItems = items.filter(item => codeFamily(item.itemCode) >= 1 && codeFamily(item.itemCode) <= 26).sort(sortCodes);
+      const nsItems = items.filter(item => isNonScheduleItem(item.itemCode)).sort(sortCodes);
+      const drItems = items.filter(item => !dsrItems.includes(item) && !nsItems.includes(item)).sort(sortCodes);
+      const beforeNS = new Set<string>();
+      const nsSubAnalyses = new Set<string>();
       const visited = new Set<string>();
-      const queue = [...roots];
+      const queue = [...dsrItems, ...drItems, ...nsItems].map(item => ({
+        code: String(item.itemCode),
+        isNS: isNonScheduleItem(item.itemCode),
+      }));
       while (queue.length) {
         const parent = queue.shift()!;
-        if (visited.has(parent)) continue;
-        visited.add(parent);
-        for (const row of analyses[parent] || []) {
+        const visitKey = `${parent.isNS ? "ns" : "schedule"}:${parent.code}`;
+        if (visited.has(visitKey)) continue;
+        visited.add(visitKey);
+        for (const row of analyses[parent.code] || []) {
           const type = String(row.row_type || "").toUpperCase();
           if (type === "NCR" || type === "SCR") continue;
           const child = String(row.component_code || row.code || "").trim();
           const explicit = row.is_sub_ar === true || row.is_sub_ar === 1 || row.is_sub_ar === "1" || String(row.isSubAR || "").toLowerCase() === "true";
           if (!/^\d+(?:\.\d+)+$/.test(child)) continue;
-          if (!mainItemCodes.has(child)) found.add(child);
-          if (explicit || analyses[child] || !visited.has(child)) queue.push(child);
+          if (!mainItemCodes.has(child)) {
+            if (parent.isNS || isNonScheduleItem(child)) nsSubAnalyses.add(child);
+            else beforeNS.add(child);
+          }
+          if (explicit || analyses[child]) {
+            queue.push({ code: child, isNS: parent.isNS || isNonScheduleItem(child) });
+          }
         }
       }
-      return { ...context, codes: [...found].sort(compareItemCodes) };
-    });
-  }, [uniqueItems, analyses, mainItemCodes]);
-  const analysisCards = useMemo(() => {
-    const dsrItems = uniqueItems.filter((item: any) => codeFamily(item.itemCode) >= 1 && codeFamily(item.itemCode) <= 26);
-    const modifiedAndNS = uniqueItems.filter((item: any) => codeFamily(item.itemCode) === 50 || codeFamily(item.itemCode) === 51);
-    const other = uniqueItems.filter((item: any) => !dsrItems.includes(item) && !modifiedAndNS.includes(item));
-    const findRateItem = (code: string) => (rates as any[]).find(rate => normalizedCode(rate.code) === normalizedCode(code)) || { code, description: "", unit: "" };
-    return [
-      { heading: "1. DSR Items (SH 1–26)" },
-      ...dsrItems.map((item: any) => ({ item, code: String(item.itemCode), isSubAnalysis: false, keepMarketRates: true })),
-      { heading: "2. DSR Sub A/Rs" },
-      ...subAnalysisSections[0].codes.map(code => ({ item: findRateItem(code), code, isSubAnalysis: true, keepMarketRates: true })),
-      { heading: "3. mDSR and NS Items" },
-      ...modifiedAndNS.map((item: any) => ({ item, code: String(item.itemCode), isSubAnalysis: false, keepMarketRates: codeFamily(item.itemCode) !== 51 })),
-      ...(other.length ? [{ heading: "Other Selected Items" }, ...other.map((item: any) => ({ item, code: String(item.itemCode), isSubAnalysis: false, keepMarketRates: true }))] : []),
-      { heading: "4. mDSR and NS Sub A/Rs (Market Rates)" },
-      ...(subAnalysisSections[1].codes.length ? [{ heading: "mDSR Sub A/Rs (Market Rates)" }, ...subAnalysisSections[1].codes.map(code => ({ item: findRateItem(code), code, isSubAnalysis: true, keepMarketRates: true }))] : []),
-      ...(subAnalysisSections[2].codes.length ? [{ heading: "NS Sub A/Rs" }, ...subAnalysisSections[2].codes.map(code => ({ item: findRateItem(code), code, isSubAnalysis: true, keepMarketRates: false }))] : []),
-    ];
-  }, [uniqueItems, subAnalysisSections, rates]);
+
+      const itemEntries = (entries: any[], keepMarketRates: boolean) => entries.map((item: any) => ({
+        item,
+        code: String(item.itemCode),
+        isSubAnalysis: false,
+        keepMarketRates,
+      }));
+      const subEntries = (codes: Set<string>, keepMarketRates: boolean) => [...codes]
+        .sort(compareItemCodes)
+        .map(code => ({ item: findRateItem(code), code, isSubAnalysis: true, keepMarketRates }));
+      return [
+        { heading: "DSR Items (SH 1–26)" },
+        ...itemEntries(dsrItems, true),
+        { heading: "DR Items" },
+        ...itemEntries(drItems, true),
+        { heading: "Sub ARs" },
+        ...subEntries(beforeNS, true),
+        { heading: "NS Items" },
+        ...itemEntries(nsItems, false),
+        { heading: "NS Sub ARs" },
+        ...subEntries(nsSubAnalyses, false),
+      ];
+    };
+    return {
+      selected: buildGroupCards(selectedItems),
+      unselected: buildGroupCards(unselectedItems),
+      hasSelected: selectedItems.length > 0,
+      hasUnselected: unselectedItems.length > 0,
+    };
+  }, [uniqueItems, selectedCodes, analyses, rates, mainItemCodes]);
 
   useEffect(() => {
     const methodKey = `esti-pro-market-method-${String(projectId || "default")}`;
-    setMethod(localStorage.getItem(methodKey) || "Conventional DSR");
+    if (!setCalculationMethod) setInternalMethod(localStorage.getItem(methodKey) || "Conventional DSR");
     try {
       const saved = localStorage.getItem(CUSTOM_CHARGES_STORAGE_KEY);
       if (saved) {
@@ -236,7 +330,7 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
         if (typeof parsed.excludeAMarkedItems === "boolean") setExcludeA(parsed.excludeAMarkedItems);
       }
     } catch (error) { console.warn("Could not load saved custom charges", error); }
-  }, [projectId]);
+  }, [projectId, setCalculationMethod]);
 
   useEffect(() => {
     let cancelled = false;
@@ -287,15 +381,14 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
       setCustomModalOpen(true);
       return;
     }
-    setMethod(next);
-    localStorage.setItem(`esti-pro-market-method-${String(projectId || "default")}`, next);
+    updateMethod(next);
   };
 
   const saveCustomCharges = () => {
     const clean = chargesDraft.map((charge, index) => ({ id: String(charge.id || `charge-${index}`), name: String(charge.name || `Charge ${index + 1}`).trim(), rate: String(Math.max(0, Number(charge.rate) || 0)) }));
     try { localStorage.setItem(CUSTOM_CHARGES_STORAGE_KEY, JSON.stringify({ charges: clean, excludeAMarkedItems: excludeADraft })); }
     catch { alert("Custom charge settings could not be saved in this browser."); return; }
-    setCharges(clean); setExcludeA(excludeADraft); setMethod("Custom charges");
+    setCharges(clean); setExcludeA(excludeADraft); updateMethod("Custom charges");
     localStorage.setItem(`esti-pro-market-method-${String(projectId || "default")}`, "Custom charges");
     setCustomModalOpen(false);
   };
@@ -314,10 +407,8 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
       const quantity = Number(row.quantity);
       return { ...row, rate, amount: row.quantity !== "" && row.quantity != null && Number.isFinite(quantity) ? quantity * rate : row.amount };
     });
-    const result = calculateAnalysis(adjusted, method, charges, excludeA, basicRatesByCode.get(normalizedCode(code))?.unit || "unit", codeFamily(code) === 3);
-    const description = String(sourceRows.find((row: any) => /details of cost/i.test(String(row.description || "")))?.description || "");
-    const baseQty = Number(description.match(/details of cost\s+(?:for\s+)?([\d.]+)/i)?.[1]) || 1;
-    return result.total > 0 ? result.total / baseQty : null;
+    const result = calculateAnalysis(adjusted, method, charges, excludeA, basicRatesByCode.get(normalizedCode(code))?.unit || "unit", codeFamily(code) === 3, getAnalysisBaseQuantity(sourceRows));
+    return result.total > 0 ? result.total : null;
   };
 
   const localFinalRates = useMemo(() => {
@@ -344,7 +435,7 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
         const quantity = Number(row.quantity);
         return { ...row, rate, amount: row.quantity !== "" && row.quantity != null && Number.isFinite(quantity) ? quantity * rate : row.amount };
       });
-      const result = calculateAnalysis(adjustedRows, method, charges, excludeA, itemData?.unit || item.unit || "unit", codeFamily(code) === 3);
+      const result = calculateAnalysis(adjustedRows, method, charges, excludeA, itemData?.unit || item.unit || "unit", codeFamily(code) === 3, getAnalysisBaseQuantity(sourceRows));
       computed[code] = sourceRows.length ? result.finalSayRate : Number(item.rate) || 0;
     }
     return computed;
@@ -359,20 +450,32 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
     }
   }, [localFinalRates, setJustifiedRates]);
 
+  useEffect(() => {
+    if (!focusCode || !isActive || loading) return;
+    const targetId = `market-rate-${String(focusCode).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    const target = document.getElementById(targetId);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    onFocusHandled?.();
+  }, [focusCode, isActive, loading, analyses, onFocusHandled]);
+
   return (
-    <div className="w-full h-full flex flex-col overflow-y-auto p-6 bg-[#0b0f19] text-slate-100 font-sans text-base">
+    <div ref={findContainerRef} className="w-full h-full flex flex-col overflow-y-auto p-6 bg-[#0b0f19] text-slate-100 font-sans text-base">
       <div className="flex justify-between items-center mb-6 pb-2 border-b border-slate-800">
         <h2 className="text-base font-bold text-amber-500 uppercase tracking-widest">Rate Analysis (Market)</h2>
-        <div className="flex items-center gap-3"><label className="flex items-center gap-2 text-sm font-semibold text-slate-300">Calculation method<select value={method} onChange={event => selectMethod(event.target.value)} className="rounded border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"><option>Conventional DSR</option><option>Modified DSR</option><option>Custom charges</option></select></label><button className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1">📄 Export Market PDF</button></div>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <label className="flex items-center gap-2 text-sm font-semibold text-slate-300">Calculation method<select value={method} onChange={event => selectMethod(event.target.value)} className="rounded border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"><option>Conventional DSR</option><option>Modified DSR</option><option>Custom charges</option></select></label>
+        </div>
       </div>
 
       {loading ? (
         <div className="text-center text-slate-500 py-20 text-base animate-pulse">Calculating Market Rates...</div>
       ) : uniqueItems.length === 0 ? (
-        <div className="text-center text-slate-500 py-20 italic text-base">No items in Measurement Sheet to analyze.</div>
+        <div className="text-center text-slate-500 py-20 italic text-base">No items on the Measurement Sheet to analyze.</div>
       ) : (
         <div className="space-y-8 max-w-7xl mx-auto pb-10">
-          {analysisCards.map((entry: any, idx: number) => {
+          {(() => {
+          const renderCards = (cards: any[]) => cards.map((entry: any, idx: number) => {
             if (entry.heading) return <h2 key={`heading-${entry.heading}`} className="text-xl font-bold text-blue-300 uppercase tracking-wide">{entry.heading}</h2>;
             const item = entry.item;
             const codeForItem = String(entry.code || "");
@@ -390,17 +493,15 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
               return { ...row, rate, amount: row.quantity !== "" && row.quantity != null && Number.isFinite(quantity) ? rate * quantity : row.amount };
             });
             const itemUnit = String(itemData?.unit || item.unit || "unit");
-            const result = isNS ? { rows: sourceRows, total: Number(itemData?.rate ?? item.rate ?? 0) } : calculateAnalysis(adjustedRows, method, charges, excludeA, itemUnit, codeFamily(codeForItem) === 3);
-            const baseDescription = String(sourceRows.find((row: any) => /details of cost/i.test(String(row.description || "")) )?.description || "");
-            const parsedBaseQty = Number(baseDescription.match(/details of cost\s+(?:for\s+)?([\d.]+)/i)?.[1]) || Number(itemData?.baseQty) || 1;
+            const result = isNS ? { rows: sourceRows, total: Number(itemData?.rate ?? item.rate ?? 0) } : calculateAnalysis(adjustedRows, method, charges, excludeA, itemUnit, codeFamily(codeForItem) === 3, getAnalysisBaseQuantity(sourceRows));
             const breakdown = external ? [] : result.rows;
             const serialNo = serialNumbers.get(codeForItem) || item.slNo || idx + 1;
             const mainIndex = uniqueItems.findIndex((main: any) => String(main.itemCode) === codeForItem) + 1;
             const headerDescription = itemData?.description ?? item.description ?? "";
             
             return (
-              <div key={`${entry.isSubAnalysis ? "sub" : "main"}-${idx}-${codeForItem}`} className="border border-slate-800 rounded-xl overflow-hidden bg-[#0b0f19] shadow-xl mb-5 text-base">
-                <div className="bg-slate-900/60 border-b border-slate-800 p-4">
+              <div id={`market-rate-${codeForItem.replace(/[^a-zA-Z0-9_-]/g, "-")}`} key={`${entry.isSubAnalysis ? "sub" : "main"}-${idx}-${codeForItem}`} className="border border-slate-800 rounded-xl overflow-hidden bg-[#0b0f19] shadow-xl mb-5 text-base">
+                <div data-find-row className="bg-slate-900/60 border-b border-slate-800 p-4">
                   {entry.isSubAnalysis && <div className="mb-2 text-xs font-bold uppercase tracking-wider text-blue-300">Sub-Analysis</div>}
                   <div className="text-lg text-amber-400 font-bold mb-2">{entry.isSubAnalysis ? `Sub-Analysis [DSR No. ${codeForItem}]` : `Item ${mainIndex} [Sl. No. ${serialNo}] [DSR No. ${codeForItem}]`} {external && <span className="ml-2 rounded border border-violet-700 bg-violet-900/50 px-2 py-1 align-middle text-xs font-bold text-violet-200">Ext. RA</span>}</div>
                   {headerDescription && <div className="text-slate-200 text-base leading-relaxed text-justify whitespace-pre-line">{headerDescription}</div>}
@@ -410,17 +511,17 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
                   <table className="w-full min-w-[850px] text-left border-collapse text-base">
                     <thead className="bg-slate-900 text-slate-400 border-b border-slate-700">
                       <tr>
-                        <th className="p-3 w-28">Code</th>
-                        <th className="p-3">Description</th>
-                        <th className="p-3 w-20 text-center">Unit</th>
-                        <th className="p-3 w-24 text-right">Qty</th>
-                        <th className="p-3 w-28 text-right text-rose-400">Market Rate (₹)</th>
-                        <th className="p-3 w-28 text-right">Amount (₹)</th>
-                        <th className="p-3 w-20 text-center">Mark</th>
+                        <th className="bg-slate-900 p-3 w-28">Code</th>
+                        <th className="bg-slate-900 p-3">Description</th>
+                        <th className="bg-slate-900 p-3 w-20 text-center">Unit</th>
+                        <th className="bg-slate-900 p-3 w-24 text-right">Qty</th>
+                        <th className="bg-slate-900 p-3 w-28 text-right text-rose-400">Market Rate (₹)</th>
+                        <th className="bg-slate-900 p-3 w-28 text-right">Amount (₹)</th>
+                        <th className="bg-slate-900 p-3 w-20 text-center">Mark</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/40">
-                      {external ? <tr><td colSpan={5} className="p-3 text-violet-200">External analysis — detailed rate analysis is maintained outside the software.</td><td className="p-3 text-right font-mono font-bold text-green-400">{Number(itemData?.rate ?? item.rate ?? 0).toFixed(2)}</td><td className="p-3 text-center">Ext. RA</td></tr> : breakdown.length > 0 ? breakdown.map((row: any, i: number) => {
+                      {external ? <tr data-find-row><td colSpan={5} className="p-3 text-violet-200">External analysis — detailed rate analysis is maintained outside the software.</td><td className="p-3 text-right font-mono font-bold text-green-400">{Number(itemData?.rate ?? item.rate ?? 0).toFixed(2)}</td><td className="p-3 text-center">Ext. RA</td></tr> : breakdown.length > 0 ? breakdown.map((row: any, i: number) => {
                         const isNCR = String(row.row_type || "").toUpperCase() === "NCR";
                         const hasAmtNum = row.amount !== null && row.amount !== undefined && row.amount !== '';
                         const hasAmtStr = row.amount_str && row.amount_str.trim() !== '';
@@ -432,7 +533,7 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
                         if (isNCR && !hasAmt) {
                           const isBoldHeader = ["MATERIAL", "LABOUR", "MACHINERY"].includes(dUp) || dUp.startsWith("DETAILS OF COST");
                           return (
-                            <tr key={i} className="border-b border-slate-800/50 bg-transparent">
+                            <tr data-find-row key={i} className="border-b border-slate-800/50 bg-transparent">
                               <td className="p-3"></td>
                               <td className={`p-3 text-slate-200 whitespace-pre-line ${isBoldHeader ? 'font-bold uppercase tracking-wider' : ''}`}>
                                 {descText}
@@ -469,7 +570,7 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
                           // Override logic for market rate
                           if (isNCR && hasAmt) {
                             return (
-                              <tr key={i} className="hover:bg-slate-900/60 border-b border-slate-800/50 transition-colors">
+                              <tr data-find-row key={i} className="hover:bg-slate-900/60 border-b border-slate-800/50 transition-colors">
                                 <td className="p-3"></td>
                                 <td className="p-3 text-slate-300 whitespace-pre-line text-justify">{descText}</td>
                                 <td className="p-3"></td>
@@ -482,7 +583,7 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
                           }
 
                           return (
-                            <tr key={i} className="hover:bg-slate-900/60 border-b border-slate-800/50 transition-colors">
+                            <tr data-find-row key={i} className="hover:bg-slate-900/60 border-b border-slate-800/50 transition-colors">
                               <td className="p-3 font-mono text-amber-500 font-bold">{code}</td>
                               <td className="p-3 text-slate-300 whitespace-pre-line text-justify">{displayDescription}</td>
                               <td className="p-3 text-center text-slate-400">{unit}</td>
@@ -499,10 +600,27 @@ export default function RateAnalysisMarket({ estimateRows, marketRates, rates = 
                 </div>
               </div>
             );
-          })}
+          });
+          return (
+            <>
+              <h2 className="text-xl font-bold text-blue-300 uppercase tracking-wide">Items selected for justification</h2>
+              {analysisCards.hasSelected
+                ? renderCards(analysisCards.selected)
+                : <p className="text-slate-500 italic">No items are selected for justification.</p>}
+              <details className="rounded-lg border border-slate-700 bg-slate-900/40">
+                <summary className="cursor-pointer px-4 py-3 font-bold text-slate-300">Items not selected for justification</summary>
+                <div className="space-y-5 p-4 text-slate-400 opacity-70">
+                  {analysisCards.hasUnselected
+                    ? renderCards(analysisCards.unselected)
+                    : <p className="italic">No unselected items.</p>}
+                </div>
+              </details>
+            </>
+          );
+          })()}
         </div>
       )}
-      {customModalOpen && <div className="fixed inset-0 z-[10050] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => { setCustomModalOpen(false); setMethod(previousMethod); }}><div className="w-full max-w-3xl rounded-xl bg-white text-slate-900 shadow-2xl" onMouseDown={event => event.stopPropagation()}><div className="border-b p-5"><h3 className="text-xl font-bold text-blue-700">Custom charges</h3><p className="text-sm text-slate-600">Set charge percentages and arrange their application order.</p></div><div className="space-y-3 p-5"><label className="flex gap-2 text-sm"><input type="checkbox" checked={excludeADraft} onChange={event => setExcludeADraft(event.target.checked)} />Exclude A-marked amounts from charge bases</label><div className="grid grid-cols-[1fr_120px_112px] gap-2 text-xs font-bold uppercase text-slate-500"><span>Charge name</span><span>Rate (%)</span><span>Order</span></div>{chargesDraft.map((charge, index) => <div key={charge.id} className="grid grid-cols-[1fr_120px_112px] items-center gap-2"><input value={charge.name} onChange={event => setChargesDraft(previous => previous.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} className="rounded border px-3 py-2"/><input type="number" min="0" step="0.01" value={charge.rate} onChange={event => setChargesDraft(previous => previous.map((entry, i) => i === index ? { ...entry, rate: event.target.value } : entry))} className="rounded border px-3 py-2 text-right"/><div className="flex justify-end gap-1"><button type="button" disabled={!index} onClick={() => setChargesDraft(previous => { const copy = [...previous]; [copy[index - 1], copy[index]] = [copy[index], copy[index - 1]]; return copy; })} className="rounded bg-slate-200 px-2 py-1 disabled:opacity-40">↑</button><button type="button" disabled={index === chargesDraft.length - 1} onClick={() => setChargesDraft(previous => { const copy = [...previous]; [copy[index + 1], copy[index]] = [copy[index], copy[index + 1]]; return copy; })} className="rounded bg-slate-200 px-2 py-1 disabled:opacity-40">↓</button><button type="button" onClick={() => setChargesDraft(previous => previous.filter((_, i) => i !== index))} className="rounded bg-rose-100 px-2 py-1 text-rose-700">×</button></div></div>)}<button type="button" onClick={() => setChargesDraft(previous => [...previous, { id: `charge-${Date.now()}`, name: "Custom charge", rate: "0" }])} className="rounded bg-blue-50 px-4 py-2 font-semibold text-blue-700">+ Add a charge</button></div><div className="flex justify-end gap-3 border-t p-4"><button onClick={() => { setCustomModalOpen(false); setMethod(previousMethod); }} className="rounded bg-slate-200 px-5 py-2 font-bold">Cancel</button><button onClick={saveCustomCharges} disabled={!chargesDraft.length} className="rounded bg-emerald-600 px-5 py-2 font-bold text-white disabled:opacity-50">Save and use</button></div></div></div>}
+      {customModalOpen && <div className="fixed inset-0 z-[10050] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => { setCustomModalOpen(false); updateMethod(previousMethod); }}><div className="w-full max-w-3xl rounded-xl bg-white text-slate-900 shadow-2xl" onMouseDown={event => event.stopPropagation()}><div className="border-b p-5"><h3 className="text-xl font-bold text-blue-700">Custom charges</h3><p className="text-sm text-slate-600">Set charge percentages and arrange their application order.</p></div><div className="space-y-3 p-5"><label className="flex gap-2 text-sm"><input type="checkbox" checked={excludeADraft} onChange={event => setExcludeADraft(event.target.checked)} />Exclude A-marked amounts from charge bases</label><div className="grid grid-cols-[1fr_120px_112px] gap-2 text-xs font-bold uppercase text-slate-500"><span>Charge name</span><span>Rate (%)</span><span>Order</span></div>{chargesDraft.map((charge, index) => <div key={charge.id} className="grid grid-cols-[1fr_120px_112px] items-center gap-2"><input value={charge.name} onChange={event => setChargesDraft(previous => previous.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} className="rounded border px-3 py-2"/><input type="number" min="0" step="0.01" value={charge.rate} onChange={event => setChargesDraft(previous => previous.map((entry, i) => i === index ? { ...entry, rate: event.target.value } : entry))} className="rounded border px-3 py-2 text-right"/><div className="flex justify-end gap-1"><button type="button" disabled={!index} onClick={() => setChargesDraft(previous => { const copy = [...previous]; [copy[index - 1], copy[index]] = [copy[index], copy[index - 1]]; return copy; })} className="rounded bg-slate-200 px-2 py-1 disabled:opacity-40">↑</button><button type="button" disabled={index === chargesDraft.length - 1} onClick={() => setChargesDraft(previous => { const copy = [...previous]; [copy[index + 1], copy[index]] = [copy[index], copy[index + 1]]; return copy; })} className="rounded bg-slate-200 px-2 py-1 disabled:opacity-40">↓</button><button type="button" onClick={() => setChargesDraft(previous => previous.filter((_, i) => i !== index))} className="rounded bg-rose-100 px-2 py-1 text-rose-700">×</button></div></div>)}<button type="button" onClick={() => setChargesDraft(previous => [...previous, { id: `charge-${Date.now()}`, name: "Custom charge", rate: "0" }])} className="rounded bg-blue-50 px-4 py-2 font-semibold text-blue-700">+ Add a charge</button></div><div className="flex justify-end gap-3 border-t p-4"><button onClick={() => { setCustomModalOpen(false); updateMethod(previousMethod); }} className="rounded bg-slate-200 px-5 py-2 font-bold">Cancel</button><button onClick={saveCustomCharges} disabled={!chargesDraft.length} className="rounded bg-emerald-600 px-5 py-2 font-bold text-white disabled:opacity-50">Save and use</button></div></div></div>}
     </div>
   );
 }

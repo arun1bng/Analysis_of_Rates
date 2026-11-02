@@ -51,8 +51,21 @@ export default function DatabaseExplorer({
   useEffect(() => {
     if (selectedSHTarget) setSelectedSH(selectedSHTarget);
   }, [selectedSHTarget]);
+
+  const formatDescription = (desc: string, code: string) => {
+    if (!desc) return "";
+    if (code && desc.includes(code)) {
+      const parts = desc.split(code);
+      const cleanDesc = parts.pop() || desc;
+      return cleanDesc.replace(/^[:\-\s,]+/, "").trim();
+    }
+    return desc.replace(/^[\d.]+\s*/, "").trim();
+  };
+
   const [fullWrap, setFullWrap] = useState(true);
   const [isSidebarHidden, setIsSidebarHidden] = useState(false);
+  const [activeGlimpseCode, setActiveGlimpseCode] = useState("");
+  const glimpseHighlightTimer = useRef<number | null>(null);
   
   const [mainSearchInput, setMainSearchInput] = useState("");
   const [mainSearchQuery, setMainSearchQuery] = useState("");
@@ -72,6 +85,16 @@ export default function DatabaseExplorer({
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const scrollPositions = useRef<Record<string, number>>({});
+
+  useEffect(() => () => {
+    if (glimpseHighlightTimer.current !== null) window.clearTimeout(glimpseHighlightTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (activeGlimpseCode) {
+      document.getElementById(`item-${activeGlimpseCode}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [activeGlimpseCode, selectedSH, mainSearchQuery]);
 
   const boqTrack = useMemo(() => {
     const track: Record<string, boolean> = {};
@@ -337,9 +360,25 @@ export default function DatabaseExplorer({
             return (
               <div key={i} className={`border border-slate-700 p-2 rounded relative shadow flex items-center justify-between transition-colors ${isInBoq ? 'bg-slate-900/50 opacity-60' : 'bg-slate-800 hover:bg-slate-700'}`}>
                 <div className="flex items-center gap-3">
-                  <span className="font-bold text-amber-400 font-mono text-sm pl-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const section = safeCode.split(".")[0];
+                      const targetSubhead = subheads.find(subhead => subhead.startsWith(`SH ${section}:`));
+                      if (targetSubhead) setSelectedSH(targetSubhead);
+                      setMainSearchInput("");
+                      setMainSearchQuery("");
+                      setMainMatchIdx(-1);
+                      document.getElementById(`item-${safeCode}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      setActiveGlimpseCode(safeCode);
+                      if (glimpseHighlightTimer.current !== null) window.clearTimeout(glimpseHighlightTimer.current);
+                      glimpseHighlightTimer.current = window.setTimeout(() => setActiveGlimpseCode(""), 1600);
+                    }}
+                    className="font-bold text-amber-400 font-mono text-sm pl-2 hover:underline"
+                    title={`Scroll to item ${safeCode}`}
+                  >
                     <HighlightText text={safeCode} query={glimpseSearchQuery} highlightClass="glimpse-highlight" />
-                  </span>
+                  </button>
                 </div>
                 
                 <div className="flex items-center gap-1.5 pr-1">
@@ -410,7 +449,7 @@ export default function DatabaseExplorer({
             <thead className="bg-slate-900 text-slate-400 border-b border-slate-800 sticky top-0 shadow z-20 text-sm">
               <tr>
                 <th className="p-3 w-32 pl-6">Item No.</th>
-                <th className="p-3">Description</th>
+                <th className="p-3">Description of Item</th>
                 <th className="p-3 w-16 text-center">Unit</th>
                 <th className="p-3 w-24 text-right">Rate (₹)</th>
                 <th className="p-3 w-24 text-center">Action</th>
@@ -445,7 +484,7 @@ export default function DatabaseExplorer({
                   const isSelected = checkedItems.includes(safeCode);
 
                   return (
-                    <tr key={idx} className={`transition-colors ${isParent ? 'bg-slate-900/90 font-bold text-amber-400' : isInBoq ? 'bg-slate-950 opacity-50 pointer-events-none' : 'hover:bg-slate-900/50 text-base'}`}>
+                    <tr id={`item-${safeCode}`} key={idx} className={`transition-colors ${activeGlimpseCode === safeCode ? "bg-amber-900/70 ring-2 ring-inset ring-amber-400" : isParent ? 'bg-slate-900/90 font-bold text-amber-400' : isInBoq ? 'bg-slate-950 opacity-50 pointer-events-none' : 'hover:bg-slate-900/50 text-base'}`}>
                       
                       <td className="p-3 font-mono text-blue-400 font-bold text-base pl-6 relative">
                         {!isParent ? (
@@ -464,7 +503,7 @@ export default function DatabaseExplorer({
                       </td>
                       
                       <td className={`p-3 text-slate-200 text-justify text-base leading-relaxed ${fullWrap ? '' : 'truncate max-w-xl'}`}>
-                        <HighlightText text={item.description || ""} query={mainSearchQuery} highlightClass="main-highlight" />
+                        <HighlightText text={formatDescription(item.description || "", cleanCode(item.code))} query={mainSearchQuery} highlightClass="main-highlight" />
                       </td>
                       <td className="p-3 text-center text-slate-400 text-sm">{item.unit ?? ""}</td>
                       <td className="p-3 text-right font-mono text-green-400 font-bold text-base">{item.rate === null || item.rate === undefined || item.rate === "" ? "" : Number(item.rate).toFixed(2)}</td>

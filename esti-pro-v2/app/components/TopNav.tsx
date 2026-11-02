@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-export default function TopNav({ activeTab, setActiveTab, theme, setTheme, onNewEstimate, onSaveEstimate, onSaveAs, onLoadEstimate, projectId, autoSaveState }: any) {
+export default function TopNav({ activeTab, setActiveTab, onSelectEstimateSubTab, theme, setTheme, onNewEstimate, onSaveEstimate, onSaveAs, onLoadEstimate, projectId, autoSaveState }: any) {
   const [estOpen, setEstOpen] = useState(false);
   const [justOpen, setJustOpen] = useState(false);
   const estRef = useRef<HTMLDivElement>(null);
@@ -21,8 +21,15 @@ export default function TopNav({ activeTab, setActiveTab, theme, setTheme, onNew
     setJustOpen(false);
   };
 
+  const handleEstimateSubTabClick = (subTab: string) => {
+    setActiveTab("estimate");
+    onSelectEstimateSubTab(subTab);
+    setEstOpen(false);
+    setJustOpen(false);
+  };
+
   const isEstActive = ["estimate", "measurement", "abstract", "general"].includes(activeTab);
-  const isJustActive = ["radsr", "ratelist", "ramarket", "juststatement", "justsummary"].includes(activeTab);
+  const isJustActive = ["radsr", "ratelist", "itemsforjustification", "ramarket", "juststatement", "justsummary"].includes(activeTab);
 
   return (
     <div className="flex flex-col w-full z-[100] relative">
@@ -43,7 +50,7 @@ export default function TopNav({ activeTab, setActiveTab, theme, setTheme, onNew
 
       {/* Main Navigation Bar */}
       <div className="bg-[#0b0f19] border-b border-slate-800 flex items-center px-4 py-2 text-sm select-none">
-        <div className="flex gap-2 w-full items-center">
+        <div className="flex w-full flex-wrap items-center gap-2">
           
           <button onClick={() => handleTabClick("home")} className={`px-4 py-1.5 rounded font-bold transition-colors ${activeTab === 'home' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>
             Home
@@ -69,9 +76,10 @@ export default function TopNav({ activeTab, setActiveTab, theme, setTheme, onNew
                 onMouseLeave={() => setEstOpen(false)}
                 className="absolute top-full left-0 mt-1 w-[200px] bg-slate-900 border border-slate-700 rounded shadow-2xl py-1 z-50 flex flex-col"
               >
-                <button onClick={() => handleTabClick("estimate")} className={`px-4 py-2 text-left hover:bg-blue-600 hover:text-white ${activeTab === 'estimate' ? 'text-blue-400 font-bold bg-slate-800/50' : 'text-slate-300'}`}>Measurement Sheet</button>
-                <button onClick={() => handleTabClick("estimate")} className={`px-4 py-2 text-left hover:bg-blue-600 hover:text-white text-slate-300`}>Detailed Abstract</button>
-                <button onClick={() => handleTabClick("estimate")} className={`px-4 py-2 text-left hover:bg-blue-600 hover:text-white text-slate-300`}>General Abstract</button>
+                <button onClick={() => handleEstimateSubTabClick("measurement")} className={`px-4 py-2 text-left hover:bg-blue-600 hover:text-white ${activeTab === 'estimate' ? 'text-blue-400 font-bold bg-slate-800/50' : 'text-slate-300'}`}>Measurement Sheet</button>
+                <button onClick={() => handleEstimateSubTabClick("abstract")} className="px-4 py-2 text-left text-slate-300 hover:bg-blue-600 hover:text-white">Detailed Abstract</button>
+                <button onClick={() => handleEstimateSubTabClick("general")} className="px-4 py-2 text-left text-slate-300 hover:bg-blue-600 hover:text-white">General Abstract</button>
+                <button onClick={() => handleEstimateSubTabClick("history")} className="px-4 py-2 text-left text-slate-300 hover:bg-blue-600 hover:text-white">History Sheet</button>
               </div>
             )}
           </div>

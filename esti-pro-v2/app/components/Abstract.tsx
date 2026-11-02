@@ -1,5 +1,7 @@
 import { buildHierarchicalRows } from "../utils/dsrHierarchy";
-import React, { useState } from "react";
+import { calculateAbstractTotals } from "../utils/abstractTotals";
+import React, { useState, useRef } from "react";
+import { exportTableToExcel } from "../utils/exportTableToExcel";
 
 const HighlightText = ({ text, query, highlightClass }: { text: string, query: string, highlightClass: string }) => {
   if (!query || typeof text !== 'string') return <>{text}</>;
@@ -23,6 +25,7 @@ const formatAmt = (val: number, formatStr: string) => {
 };
 
 export default function Abstract({ estimateRows = [], setEstimateRows, rates = [], projectDetails, marketRates = {}, theme = "dark" }: any) {
+  const exportRootRef = useRef<HTMLDivElement>(null);
   const [searchInput, setSearchInput] = useState("");
   const [selectedItemsForDelete, setSelectedItemsForDelete] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<{type: 'item' | 'sh' | 'selectedItems', code?: string, name?: string} | null>(null);
@@ -120,24 +123,9 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
   });
 
   const sortedSHNames = Object.keys(groupedItems).sort((a, b) => extractSHNum(a) - extractSHNum(b));
-  const isNSR = (code: string) => code?.startsWith("NSR") || code?.startsWith("51.");
-  
-  const totalDSR = Math.round(estimateRows.filter((row: any) => !isNSR(row.itemCode?.toString())).reduce((sum: number, row: any) => sum + (Number(row.rate) || 0) * (Number(row.quantity) || 1), 0));
-  
-  const ciRate = Number(projectDetails.costIndex) || 0;
-  const ciAmount = Math.round(totalDSR * (ciRate / 100));
-  const subtotalDSR_CI = totalDSR + ciAmount;
-
+  const { totalDSR, ciRate, ciAmount, subtotalDSR_CI, modifiedDSR, nsrTotal, baseCombined } =
+    calculateAbstractTotals(estimateRows, projectDetails, marketRates);
   const modFactor = Number(projectDetails.gstModificationFactor) || 1;
-  const modifiedDSR = Math.round(subtotalDSR_CI * modFactor);
-
-  const nsrTotal = Math.round(estimateRows.filter((row: any) => isNSR(row.itemCode?.toString())).reduce((sum: number, row: any) => {
-     const safeCode = row.itemCode?.toString();
-     const marketRate = marketRates[safeCode] !== undefined ? Number(marketRates[safeCode]) : (Number(row.rate) || 0);
-     return sum + (marketRate * (Number(row.quantity) || 1));
-  }, 0));
-
-  const baseCombined = modifiedDSR + nsrTotal;
 
   const epfRate = (Number(projectDetails.epf) || 0) / 100;
   const esiRate = (Number(projectDetails.esi) || 0) / 100;
@@ -179,7 +167,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
   if (customTaxAmount > 0) refFinalStr += " + I";
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden p-6 font-sans text-xs bg-[#0b1121] text-slate-100 relative">
+    <div ref={exportRootRef} className="flex-1 flex flex-col overflow-hidden p-6 font-sans text-xs bg-[#0b1121] text-slate-100 relative">
       
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[300]">
@@ -211,7 +199,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
               <button onClick={() => setSearchInput("")} className="absolute right-2 text-slate-400 hover:text-white text-base leading-none p-1">✕</button>
             )}
           </div>
-          <button className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📊 Abs. Excel</button>
+          <button type="button" onClick={() => exportTableToExcel(exportRootRef.current, "Detailed Abstract", "Detailed_Abstract")} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📊 Abs. Excel</button>
           <button className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 Abs. PDF</button>
         </div>
       </div>

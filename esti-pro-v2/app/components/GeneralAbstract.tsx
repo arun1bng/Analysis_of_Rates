@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useRef } from "react";
+import { exportTableToExcel } from "../utils/exportTableToExcel";
 
 const formatAmt = (val: number, formatStr: string) => {
   const num = Math.round(val);
@@ -8,6 +9,7 @@ const formatAmt = (val: number, formatStr: string) => {
 };
 
 export default function GeneralAbstract({ estimateRows = [], rates = [], projectDetails, marketRates = {}, theme = "dark" }: any) {
+  const exportRootRef = useRef<HTMLDivElement>(null);
   
   const currentFormat = projectDetails?.currencyFormat || "Indian (Lakhs/Crores)";
 
@@ -101,14 +103,14 @@ export default function GeneralAbstract({ estimateRows = [], rates = [], project
   if (customTaxAmount > 0) refFinalStr += " + I";
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden p-6 font-sans text-sm bg-[#0b1121] text-slate-100 items-center">
+    <div ref={exportRootRef} className="flex-1 flex flex-col overflow-hidden p-6 font-sans text-sm bg-[#0b1121] text-slate-100 items-center">
       
       <div className="w-full max-w-5xl flex justify-between items-center mb-6 pb-2 border-b border-slate-800 shrink-0">
         <div className="text-lg font-bold text-amber-500 tracking-widest uppercase">
           GENERAL ABSTRACT (FINANCIAL BREAKDOWN)
         </div>
         <div className="flex gap-2">
-          <button className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📊 Excel</button>
+          <button type="button" onClick={() => exportTableToExcel(exportRootRef.current, "General Abstract", "General_Abstract")} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📊 Excel</button>
           <button className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 PDF</button>
         </div>
       </div>
