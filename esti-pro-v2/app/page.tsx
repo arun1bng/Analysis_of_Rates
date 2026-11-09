@@ -18,6 +18,7 @@ import JustificationSummary, { type JustificationSummaryInputs } from "./compone
 import ItemsForJustification from "./components/ItemsForJustification";
 import { PageToolsProvider } from "./components/PageToolsContext";
 import { DEFAULT_PROJECT_DOCUMENT_SETTINGS } from "./utils/projectDocumentSettings";
+import { exportMasterEstimateToExcel } from "./utils/exportMasterEstimateToExcel";
 
 const DEFAULT_PROJECT_DETAILS = { 
   estimateId: "EST-2026-001", 
@@ -743,16 +744,43 @@ export default function App() {
     setEstimateSubTab(subTab);
   };
 
+  const handleMasterExport = async () => {
+    try {
+      await exportMasterEstimateToExcel({
+        estimateRows,
+        rates: estimateRates,
+        marketRates,
+        projectDetails,
+      }, String(projectDetails.estimateId || "Export"));
+    } catch (error) {
+      console.error("Could not export the master estimate workbook:", error);
+      alert(error instanceof Error ? error.message : "Could not export the master estimate workbook.");
+    }
+  };
+
   const renderEstimateBundle = () => (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex bg-slate-900 border-b border-slate-800 px-4 pt-2 gap-2 shrink-0">
-        <button onClick={() => void selectEstimateSubTab("measurement")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'measurement' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📖 Measurement Sheet</button>
-        <button onClick={() => void selectEstimateSubTab("abstract")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'abstract' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📑 Detailed Abstract</button>
-        <button onClick={() => void selectEstimateSubTab("general")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'general' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>💰 General Abstract</button>
-        <button onClick={() => void selectEstimateSubTab("history")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'history' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📋 History Sheet</button>
+      <div className="flex items-center justify-between bg-slate-900 border-b border-slate-800 px-4 pt-2 gap-2 shrink-0">
+        <div className="flex space-x-2">
+          <button onClick={() => void selectEstimateSubTab("measurement")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'measurement' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📖 Measurement Sheet</button>
+          <button onClick={() => void selectEstimateSubTab("abstract")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'abstract' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📑 Detailed Abstract</button>
+          <button onClick={() => void selectEstimateSubTab("general")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'general' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>💰 General Abstract</button>
+          <button onClick={() => void selectEstimateSubTab("history")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'history' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📋 History Sheet</button>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleMasterExport()}
+          className="mb-1 ml-auto flex items-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-md transition-colors hover:bg-emerald-500"
+          title="Export all sheets to a single cross-linked Excel workbook"
+        >
+          <svg className="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          Export Master Estimate to Excel
+        </button>
       </div>
       
-      {estimateSubTab === "measurement" && <MeasurementSheet estimateRows={estimateRows} setEstimateRows={setEstimateRows} rates={estimateRates} theme={theme} checkedItems={dbCheckedItems} setCheckedItems={setDbCheckedItems} />}
+      {estimateSubTab === "measurement" && <MeasurementSheet estimateRows={estimateRows} setEstimateRows={setEstimateRows} rates={estimateRates} theme={theme} checkedItems={dbCheckedItems} setCheckedItems={setDbCheckedItems} projectDetails={projectDetails} />}
       {estimateSubTab === "abstract" && <Abstract estimateRows={estimateRows} setEstimateRows={setEstimateRows} rates={estimateRates} projectDetails={projectDetails} marketRates={marketRates} theme={theme} />}
       {estimateSubTab === "general" && <GeneralAbstract estimateRows={estimateRows} rates={estimateRates} projectDetails={projectDetails} marketRates={marketRates} theme={theme} />}
       {estimateSubTab === "history" && <HistorySheet projectId={activeProjectDbId} projectDetails={projectDetails} />}

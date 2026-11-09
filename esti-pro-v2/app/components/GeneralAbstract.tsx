@@ -1,5 +1,5 @@
 import React, { useRef } from "react";
-import { exportTableToExcel } from "../utils/exportTableToExcel";
+import { exportGenAbstToExcel } from "../utils/exportTableToExcel";
 
 const formatAmt = (val: number, formatStr: string) => {
   const num = Math.round(val);
@@ -21,7 +21,7 @@ export default function GeneralAbstract({ estimateRows = [], rates = [], project
     "18": "SH 18: WATER SUPPLY", "19": "SH 19: DRAINAGE", "20": "SH 20: PILE WORK", "21": "SH 21: ALUMINIUM WORK", "22": "SH 22: WATER PROOFING",
     "23": "SH 23: STRUCTURAL STEEL & METAL WORKS", "24": "SH 24: BUILDING MAINTENANCE", "25": "SH 25: ROAD & PAVEMENT REPAIRS",
     "26": "SH 26: WATER SUPPLY & SANITARY FITTINGS", "49": "SH 49: SPECIAL ARs / Sub ARs (NOT IN DSR)", 
-    "50": "SH 50: MODIFIED DSR ITEMS (mDSR)", "51": "SH 51: NON-SCHEDULE ITEMS (NS)"
+    "50": "SH 50: MODIFIED DSR ITEMS", "51": "SH 51: NON-SCHEDULED ITEMS"
   };
 
   const extractSHNum = (shName: string) => {
@@ -110,7 +110,7 @@ export default function GeneralAbstract({ estimateRows = [], rates = [], project
           GENERAL ABSTRACT (FINANCIAL BREAKDOWN)
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={() => exportTableToExcel(exportRootRef.current, "General Abstract", "General_Abstract")} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📊 Excel</button>
+          <button type="button" onClick={() => void exportGenAbstToExcel(exportRootRef.current, String(projectDetails?.nameOfWork || ""), "General_Abstract", projectDetails || {}, String(projectDetails?.estimateId || "N/A"), { estimateRows, rates, marketRates, projectDetails: projectDetails || {} })} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📊 Excel</button>
           <button className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 PDF</button>
         </div>
       </div>
@@ -142,20 +142,20 @@ export default function GeneralAbstract({ estimateRows = [], rates = [], project
             {estimateRows.length > 0 && (
               <>
                 <tr className="bg-slate-900/50 border-t-4 border-slate-800">
-                  <td colSpan={2} className="p-4 text-right font-bold text-slate-300 border-r border-slate-700/50 text-base">Total of DSR / Schedule Items:</td>
+                  <td colSpan={2} className="p-4 text-right font-bold text-slate-300 border-r border-slate-700/50 text-base">Total of Schedule &amp; mDSR Items:</td>
                   <td className="p-4 text-right text-blue-400 font-bold font-mono text-base border-r border-slate-700/50">₹{formatAmt(totalDSR, currentFormat)}</td>
                   <td className="p-4 text-center font-bold text-slate-400 border-r border-slate-700/50">A</td>
                 </tr>
                 {ciRate > 0 && (
                   <tr className="hover:bg-slate-900/50">
-                    <td colSpan={2} className="p-4 text-right font-bold text-slate-300 border-r border-slate-700/50 text-base">Add Cost Index @ {ciRate}% on DSR Items:</td>
+                    <td colSpan={2} className="p-4 text-right font-bold text-slate-300 border-r border-slate-700/50 text-base">Add Cost Index @ {ciRate}% on DSR &amp; mDSR Items:</td>
                     <td className="p-4 text-right text-blue-400 font-bold font-mono text-base border-r border-slate-700/50">₹{formatAmt(ciAmount, currentFormat)}</td>
                     <td className="p-4 text-center font-bold text-slate-400 border-r border-slate-700/50">{ciDecString}A</td>
                   </tr>
                 )}
                 {ciRate > 0 && (
                   <tr className="hover:bg-slate-900/50">
-                    <td colSpan={2} className="p-4 text-right font-bold text-slate-300 border-r border-slate-700/50 text-base">Subtotal of DSR and MDSR items enhanced by CI @ {ciRate}%:</td>
+                    <td colSpan={2} className="p-4 text-right font-bold text-slate-300 border-r border-slate-700/50 text-base">Subtotal of DSR and mDSR items enhanced by CI @ {ciRate}%:</td>
                     <td className="p-4 text-right text-blue-400 font-bold font-mono text-base border-r border-slate-700/50">₹{formatAmt(subtotalDSR_CI, currentFormat)}</td>
                     <td className="p-4 text-center font-bold text-slate-400 border-r border-slate-700/50">B = {ciMultiplierString}A</td>
                   </tr>
