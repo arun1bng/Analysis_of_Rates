@@ -39,10 +39,13 @@ function openProjectDatabase(projectId: string) {
       unit TEXT NOT NULL DEFAULT '',
       rate REAL NOT NULL DEFAULT 0,
       analysis_json TEXT NOT NULL DEFAULT '[]',
+      nsr_settings_json TEXT NOT NULL DEFAULT '{}',
       is_external_ar INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  const customItemColumns = new Set((database.prepare("PRAGMA table_info(project_custom_items)").all() as Array<{ name: string }>).map(column => column.name));
+  if (!customItemColumns.has("nsr_settings_json")) database.exec("ALTER TABLE project_custom_items ADD COLUMN nsr_settings_json TEXT NOT NULL DEFAULT '{}'");
   database.prepare("INSERT INTO project_metadata (key, value) VALUES ('estimate_id', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(projectId);
   return database;
 }
@@ -60,8 +63,14 @@ export async function GET(request: Request) {
     database = openProjectDatabase(projectId);
     const rows = database.prepare("SELECT code, market_rate FROM project_market_rates ORDER BY code").all() as Array<{ code: string; market_rate: number }>;
     const marketRates = Object.fromEntries(rows.map(row => [row.code, Number(row.market_rate)]));
-    const customItems = database.prepare("SELECT code, description, unit, rate, analysis_json, is_external_ar FROM project_custom_items ORDER BY code").all() as Array<Record<string, any>>;
-    return NextResponse.json({ projectId, marketRates, customItems: customItems.map(row => ({ ...row, analysisRows: JSON.parse(row.analysis_json || "[]"), isExternalAR: Boolean(row.is_external_ar) })) });
+    const customItems = database.prepare("SELECT code, description, unit, rate, analysis_json, nsr_settings_json, is_external_ar FROM project_custom_items ORDER BY code").all() as Array<Record<string, any>>;
+    return NextResponse.json({ projectId, marketRates, customItems: customItems.map(row => {
+      let nsrSettings: Record<string, unknown> = {};
+      try { const parsed = JSON.parse(row.nsr_settings_json || "{}"); if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) nsrSettings = parsed; } catch { console.error(`Invalid NSR settings for project item ${row.code}`); }
+      let analysisRows: any[] = [];
+      try { const parsed = JSON.parse(row.analysis_json || "[]"); if (Array.isArray(parsed)) analysisRows = parsed; } catch { console.error(`Invalid analysis rows for project item ${row.code}`); }
+      return { ...row, ...nsrSettings, nsrSettings, analysisRows, isExternalAR: Boolean(row.is_external_ar) };
+    }) });
   } catch (error) {
     console.error("Project market-rate load error:", error);
     return NextResponse.json({ error: "Could not load this project's saved market rates." }, { status: 500 });
@@ -98,16 +107,29 @@ export async function POST(request: Request) {
         for (const row of rows) insertRate.run(row.code, row.rate);
       }
       if (items) {
-        const insertItem = database!.prepare(`INSERT INTO project_custom_items (code, description, unit, rate, analysis_json, is_external_ar, updated_at)
-          VALUES (@code, @description, @unit, @rate, @analysis_json, @is_external_ar, CURRENT_TIMESTAMP)
+        const insertItem = database!.prepare(`INSERT INTO project_custom_items (code, description, unit, rate, analysis_json, nsr_settings_json, is_external_ar, updated_at)
+          VALUES (@code, @description, @unit, @rate, @analysis_json, @nsr_settings_json, @is_external_ar, CURRENT_TIMESTAMP)
           ON CONFLICT(code) DO UPDATE SET description=excluded.description, unit=excluded.unit, rate=excluded.rate,
-          analysis_json=excluded.analysis_json, is_external_ar=excluded.is_external_ar, updated_at=CURRENT_TIMESTAMP`);
+          analysis_json=excluded.analysis_json, nsr_settings_json=excluded.nsr_settings_json,
+          is_external_ar=excluded.is_external_ar, updated_at=CURRENT_TIMESTAMP`);
         for (const item of items) {
           const code = String(item?.code ?? "").trim();
           const rate = Number(item?.rate ?? 0);
           if (!code || !Number.isFinite(rate) || rate < 0 || (!item?.isExternalAR && !Array.isArray(item?.analysisRows))) throw new Error("A project item has invalid code, rate, or analysis rows.");
+          const settings = item?.nsrSettings && typeof item.nsrSettings === "object" && !Array.isArray(item.nsrSettings)
+            ? item.nsrSettings
+            : {
+                baseQty: item.baseQty,
+                calcMethod: item.calcMethod,
+                clcPeriod: item.clcPeriod,
+                clcArea: item.clcArea,
+                customCharges: item.customCharges,
+                excludeAMarkedItems: item.excludeAMarkedItems,
+                isParentHeading: item.isParentHeading,
+              };
           insertItem.run({ code, description: String(item.description ?? ""), unit: String(item.unit ?? ""), rate,
-            analysis_json: JSON.stringify(item.isExternalAR ? [] : item.analysisRows), is_external_ar: item.isExternalAR ? 1 : 0 });
+            analysis_json: JSON.stringify(item.isExternalAR ? [] : item.analysisRows), nsr_settings_json: JSON.stringify(settings),
+            is_external_ar: item.isExternalAR ? 1 : 0 });
         }
       }
       if (deletedCodes?.length) {

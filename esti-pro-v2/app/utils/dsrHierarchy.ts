@@ -27,6 +27,14 @@ function codeOf(row: any): string {
   return String(row?.itemCode ?? row?.code ?? "").trim();
 }
 
+function firstDescription(...values: unknown[]): string {
+  for (const value of values) {
+    const description = String(value ?? "").trim();
+    if (description) return description;
+  }
+  return "";
+}
+
 function compareCodes(a: string, b: string): number {
   const left = a.match(/\d+|[a-z]+/gi) || [];
   const right = b.match(/\d+|[a-z]+/gi) || [];
@@ -126,7 +134,7 @@ export function buildHierarchicalRows(estimateRows: any[] = [], allRates: any[] 
       for (let depth = 2; depth < parts.length; depth++) {
         const code = parts.slice(0, depth).join(".");
         const record = rateByCode.get(code);
-        ancestors.push({ code, description: String(record?.description ?? "") });
+        ancestors.push({ code, description: firstDescription(record?.description, record?.itemDescription, record?.item_description) });
       }
       ancestorCache.set(item.itemCode, ancestors);
     }
@@ -181,7 +189,11 @@ export function buildHierarchicalRows(estimateRows: any[] = [], allRates: any[] 
           sectionCode,
           itemCode: ancestor.code,
           serialNo,
-          description: cleanDescription(ancestor.description, ancestor.code, String(parentRecord?.description ?? "")),
+          description: cleanDescription(
+            firstDescription(ancestor.description, parentRecord?.description, parentRecord?.itemDescription, parentRecord?.item_description),
+            ancestor.code,
+            firstDescription(parentRecord?.description, parentRecord?.itemDescription, parentRecord?.item_description),
+          ),
           unit: "",
           quantity: "",
           rate: "",
@@ -197,7 +209,14 @@ export function buildHierarchicalRows(estimateRows: any[] = [], allRates: any[] 
       for (let i = leafDepth + 1; i < counters.length; i++) counters[i] = 0;
       const serialNo = `${serialRoot}${counters.slice(0, leafDepth + 1).map((n) => `.${n}`).join("")}`;
       const parentDescriptions = ancestors.map((ancestor) => ancestor.description);
-      const itemDescription = String(item.description ?? rateByCode.get(code)?.description ?? "");
+      const rateRecord = rateByCode.get(code);
+      const itemDescription = firstDescription(
+        item.userDescription,
+        item.description,
+        rateRecord?.description,
+        rateRecord?.itemDescription,
+        rateRecord?.item_description,
+      );
       output.push({
         ...item,
         rowKey: `item:${sectionCode}:${code}:${String(item.id ?? output.length)}`,

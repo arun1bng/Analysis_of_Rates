@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import { AlignmentType, BorderStyle, Document, Footer, ImageRun, PageNumber, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from "docx";
+import { AlignmentType, BorderStyle, Document, Footer, HeightRule, ImageRun, PageNumber, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { saveAs } from "file-saver";
 import type { HistoryEstimateSummary } from "../utils/historyEstimateSummary";
 import type { ProjectDocumentSettings } from "../utils/projectDocumentSettings";
@@ -122,6 +122,13 @@ const labelClass = "mb-1 block text-xs font-bold uppercase tracking-wide text-sl
 const LOGO_LIBRARY_STORAGE_KEY = "esti-pro-history-logo-library-v1";
 type SavedLogo = { name: string; dataUrl: string };
 
+// Keep Word and browser-PDF page geometry in sync with the approved History Sheet.
+const HISTORY_PAGE = {
+  topTwips: 1134, rightTwips: 850, bottomTwips: 1134, leftTwips: 1417,
+  topMm: 20, rightMm: 15, bottomMm: 20, leftMm: 25,
+  headRowTwips: 480, headRowCm: 0.85,
+} as const;
+
 async function imageRun(dataUrl: string, fallbackUrl: string, width: number, height: number) {
   let bytes: Uint8Array<ArrayBuffer>;
   if (dataUrl) {
@@ -145,6 +152,7 @@ export default function HistorySheet({
   projectId: string;
   projectDetails: ProjectDocumentSettings & { timeLimitMonths?: string };
 }) {
+  const exportRootRef = useRef<HTMLDivElement>(null);
   const [form, setForm] = useState<HistorySheetData>(DEFAULT_HISTORY_SHEET);
   const [estimateSummary, setEstimateSummary] = useState<HistoryEstimateSummary | null>(null);
   const [hasSavedSheet, setHasSavedSheet] = useState(false);
@@ -353,7 +361,7 @@ export default function HistorySheet({
         properties: {
           page: {
             size: { width: 11906, height: 16838 },
-            margin: { top: 1080, right: 850, bottom: 1080, left: 850, header: 425, footer: 425 },
+            margin: { top: HISTORY_PAGE.topTwips, right: HISTORY_PAGE.rightTwips, bottom: HISTORY_PAGE.bottomTwips, left: HISTORY_PAGE.leftTwips, header: 425, footer: 425 },
           },
         },
         footers: {
@@ -430,12 +438,12 @@ export default function HistorySheet({
             width: { size: 100, type: WidthType.PERCENTAGE },
             borders: headBorders,
             rows: [
-              new TableRow({ children: [
+              new TableRow({ height: { value: HISTORY_PAGE.headRowTwips, rule: HeightRule.ATLEAST }, children: [
                 new TableCell({ width: { size: 33, type: WidthType.PERCENTAGE }, borders: headBorders, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Major Head", bold: true, size: 22 })] })] }),
                 new TableCell({ width: { size: 34, type: WidthType.PERCENTAGE }, borders: headBorders, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Minor Head", bold: true, size: 22 })] })] }),
                 new TableCell({ width: { size: 33, type: WidthType.PERCENTAGE }, borders: headBorders, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Detailed Head", bold: true, size: 22 })] })] }),
               ] }),
-              new TableRow({ children: [
+              new TableRow({ height: { value: HISTORY_PAGE.headRowTwips, rule: HeightRule.ATLEAST }, children: [
                 new TableCell({ width: { size: 33, type: WidthType.PERCENTAGE }, borders: headBorders, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: form.majorHead, size: 22 })] })] }),
                 new TableCell({ width: { size: 34, type: WidthType.PERCENTAGE }, borders: headBorders, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: form.minorHead, size: 22 })] })] }),
                 new TableCell({ width: { size: 33, type: WidthType.PERCENTAGE }, borders: headBorders, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: form.detailedHead, size: 22 })] })] }),
@@ -560,10 +568,56 @@ export default function HistorySheet({
     saveAs(blob, `History_Sheet_${projectId || 'Draft'}.docx`);
   };
 
+  const exportToPdf = () => {
+    const printWindow = window.open("", "_blank", "width=1000,height=800");
+    if (!printWindow) throw new Error("The PDF print window was blocked. Allow pop-ups and try again.");
+    const escapeHtml = (value: unknown) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
+    const paragraphs = (value: string) => value.split(/\r?\n/).map(line => `<p>${escapeHtml(line) || "&nbsp;"}</p>`).join("");
+    const typeString = form.estimateType === "PE_CUM_DE" ? "Preliminary Estimate cum Detailed Estimate" : "Detailed Estimate";
+    const probableCost = estimateSummary?.probableCost ?? 0;
+    const surchargeItems = [
+      (estimateSummary?.contingencyRate ?? 0) > 0 ? `${estimateSummary?.contingencyRate}% contingencies` : "",
+      (estimateSummary?.epfRate ?? 0) > 0 ? `EPF Charges @ ${estimateSummary?.epfRate}%` : "",
+      (estimateSummary?.esiRate ?? 0) > 0 ? `ESI Charges @ ${estimateSummary?.esiRate}%` : "",
+      (estimateSummary?.departmentalChargesRate ?? 0) > 0 ? `Departmental Charges at reduced rate of @ ${estimateSummary?.departmentalChargesRate}%` : "",
+    ].filter(Boolean);
+    const surchargeSentence = surchargeItems.length ? ` including ${joinWithAnd(surchargeItems)}` : "";
+    const amountWithWords = `${formatAmount(probableCost)}/- (Rupees ${numberToIndianWords(probableCost)} Only)`;
+    const officeTitle = String(projectDetails.eeTitle || "Executive Engineer & Senior Manager (C)-I,").replace(/^Office of the\s+/i, "").trim();
+    const officeName = String(projectDetails.eeOffice || "").trim();
+    const dsrYear = String(estimateSummary?.dsrYear || "2023").replace(/^D\.?S\.?R\.?\s*[-:]?\s*/i, "").trim();
+    const costIndexValue = Number(estimateSummary?.costIndex) || 0;
+    const approvedCostIndex = Math.round(100 + costIndexValue);
+    const rateLocation = String(projectDetails.subDivision || "").replace(/\bsub[- ]?division\b.*$/i, "").trim();
+    const rateDescription = `D.S.R.-${dsrYear}${costIndexValue > 0 ? ` duly enhanced by the approved Cost Index of ${approvedCostIndex}${rateLocation ? ` for ${rateLocation}` : ""}` : ""} & Market rates for Non-scheduled items.`;
+    const cpwdLogo = escapeHtml(form.cpwdLogoDataUrl || "/logos/cpwd-logo.png");
+    const goiLogo = escapeHtml(form.goiLogoDataUrl || "/logos/goi-emblem.png");
+    const timeLimit = estimateSummary?.timeLimitMonths == null
+      ? "Not specified for execution."
+      : `${estimateSummary.timeLimitMonths} (${numberToTimeWords(estimateSummary.timeLimitMonths)}) months for execution.`;
+    printWindow.document.open();
+    printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>History Sheet</title><style>
+      @page{size:A4 portrait;margin:${HISTORY_PAGE.topMm}mm ${HISTORY_PAGE.rightMm}mm ${HISTORY_PAGE.bottomMm}mm ${HISTORY_PAGE.leftMm}mm;@bottom-center{content:"Page " counter(page) " of " counter(pages);font:9pt "Book Antiqua",serif}@bottom-right{content:"EST ID: ${escapeHtml(estimateSummary?.estimateId || projectId || "N/A")}";font:9pt "Book Antiqua",serif}}
+      *{box-sizing:border-box}body{margin:0;color:#111;font:11pt "Book Antiqua",serif;line-height:1.35}.masthead{display:grid;grid-template-columns:15% 70% 15%;align-items:center;text-align:center;min-height:27mm}.masthead .logo{display:flex;align-items:center;justify-content:center;height:25mm}.masthead img{display:block;max-width:18mm;max-height:23mm;width:auto;height:auto;object-fit:contain}.masthead>div:nth-child(2){text-align:center}.masthead h1,.masthead p{text-align:center;margin-left:0;margin-right:0}.masthead h1{font-size:14pt;margin-top:3px;margin-bottom:3px}.masthead p{margin-top:2px;margin-bottom:2px;font-weight:bold}.office{display:flex;justify-content:space-between;margin-top:14px;font-weight:bold}.meta{margin:12px 0}.meta p{margin:6px 0}.heads{width:100%;table-layout:fixed;border-collapse:collapse;margin:10px 0}.heads th,.heads td{border:1px solid #111;padding:2mm 2mm;height:${HISTORY_PAGE.headRowCm}cm;vertical-align:middle;text-align:center}.heads th{width:33.333%;font-weight:bold}h2{text-align:center;font-size:13pt;margin:16px 0 8px}h3{font-size:11pt;text-decoration:underline;margin:12px 0 5px}p{margin:6px 0;text-align:justify}.indent{text-indent:28px}.signatories{display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;margin-top:34px;font-weight:bold}.signatories .center{grid-column:1/3;text-align:center}.small{font-size:10pt}
+      </style></head><body>
+      <div class="masthead"><div class="logo"><img src="${cpwdLogo}"></div><div><h1>GOVERNMENT OF INDIA</h1><p>CENTRAL PUBLIC WORKS DEPARTMENT</p><p>Office of the ${escapeHtml(officeTitle)}</p><p>${escapeHtml(officeName)}</p></div><div class="logo"><img src="${goiLogo}"></div></div>
+      <div class="office"><span>STATE : ${escapeHtml(projectDetails.state)}</span><span>DIVISION : ${escapeHtml(projectDetails.division)}</span></div><div class="office"><span>BRANCH : ${escapeHtml(projectDetails.branch)}</span><span>SUB DIVISION : ${escapeHtml(projectDetails.subDivision)}</span></div>
+      <div class="meta"><p><b>ESTIMATE NO:</b> ${escapeHtml(estimateSummary?.estimateId || projectId)}</p><p><b>Name of work:</b> ${escapeHtml(estimateSummary?.nameOfWork || "—")}</p><p><b>SH:</b> ${escapeHtml(estimateSummary?.subHeads || "—")}</p></div>
+      <table class="heads"><tr><th>Major Head</th><th>Minor Head</th><th>Detailed Head</th></tr><tr><td>${escapeHtml(form.majorHead)}</td><td>${escapeHtml(form.minorHead)}</td><td>${escapeHtml(form.detailedHead)}</td></tr></table>
+      <p class="indent">This ${form.isDraft ? "Draft " : ""}${escapeHtml(typeString)} has been framed by ${escapeHtml(form.framedBy)} and further scrutinized in the Office of the ${escapeHtml(officeTitle)} ${escapeHtml(officeName)}, at a probable cost of ${escapeHtml(amountWithWords)} (Civil work)${escapeHtml(surchargeSentence)}.</p>
+      <h2>REPORT</h2><h3>History:</h3>${paragraphs(form.historyNarrative)}<h3>Design &amp; Scope:</h3>${paragraphs(form.designScopeNarrative)}
+      <p><b><u>Specification:</u></b> ${escapeHtml(form.specifications)}</p><p><b><u>Cost:</u></b> ${escapeHtml(amountWithWords)} (Civil work)${escapeHtml(surchargeSentence)}.</p>
+      <p><b><u>Rate (Civil):</u></b> ${escapeHtml(rateDescription)}</p><p><b><u>Method:</u></b> ${escapeHtml(form.methodOfExecution)}</p><p><b><u>Time Limit:</u></b> ${escapeHtml(timeLimit)}</p><p><b><u>Tools &amp; plant:</u></b> ${escapeHtml(form.toolsAndPlant)}</p><p><b><u>Land:</u></b> ${escapeHtml(form.landAvailability)}</p>
+      ${form.includeNote ? `<h3>Note:</h3>${paragraphs(form.noteText)}` : ""}
+      <div class="signatories"><span>${escapeHtml(projectDetails.leftAETitle)}</span><span style="text-align:right">${escapeHtml(projectDetails.rightAETitle)}</span><span>${escapeHtml(projectDetails.leftAEOffice)}</span><span style="text-align:right">${escapeHtml(projectDetails.rightAEOffice)}</span><span class="center">${escapeHtml(projectDetails.eeTitle)}</span><span class="center">${escapeHtml(projectDetails.eeOffice)}</span></div>
+      <script>window.addEventListener('load',()=>{window.focus();setTimeout(()=>window.print(),300)});window.addEventListener('afterprint',()=>window.close());</script></body></html>`);
+    printWindow.document.close();
+  };
+
   const summaryValue = (amount: number) => formatAmount(amount);
 
   return (
-    <div className="flex-1 overflow-auto bg-[#0b1121] px-4 py-5 text-slate-100 print:bg-white print:px-0 print:py-0 print:text-black">
+    <div ref={exportRootRef} className="flex-1 overflow-auto bg-[#0b1121] px-4 py-5 text-slate-100 print:bg-white print:px-0 print:py-0 print:text-black">
       <div className="mx-auto max-w-6xl">
         <header className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700 pb-3 print:mb-3 print:border-slate-400">
           <div>
@@ -579,6 +633,9 @@ export default function HistorySheet({
             </button>
             <button type="button" onClick={exportToWord} className="rounded border border-slate-600 px-3 py-2 text-sm font-bold text-slate-200 hover:bg-slate-800">
               Export Word Doc
+            </button>
+            <button type="button" onClick={exportToPdf} className="rounded bg-rose-600 px-3 py-2 text-sm font-bold text-white hover:bg-rose-500">
+              Export to PDF
             </button>
           </div>
         </header>

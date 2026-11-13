@@ -165,6 +165,14 @@ def load_dsr_and_basic_rates():
         df_sheet = pd.read_excel(xls, sheet_name=sheet_name, dtype=str)
         df_sheet = df_sheet.dropna(how='all')
         if df_sheet.empty or len(df_sheet.columns) < 4: continue
+
+        # Only the newer DSR workbook has a dedicated total-quantity/divisor
+        # field in column F. In older sheets that same column is the historical
+        # DSR-2016 rate, so its numeric value must never be used as a divisor.
+        sheet_has_total_qty_column = any(
+            "total qty" in clean_text(value).lower() and "unit qty" in clean_text(value).lower()
+            for value in df_sheet.iloc[:5].to_numpy().flat
+        )
             
         for _, row in df_sheet.iterrows():
             raw_code = clean_text(row.iloc[0])
@@ -172,11 +180,17 @@ def load_dsr_and_basic_rates():
             
             code, last_minor, last_major = fix_cpwd_code(raw_code, last_minor, last_major)
             
-            raw_divisor = row.iloc[5] if len(row) > 5 else None
+            raw_divisor = row.iloc[5] if sheet_has_total_qty_column and len(row) > 5 else None
             divisor = clean_num(raw_divisor)
             has_explicit = pd.notna(raw_divisor) and str(raw_divisor).strip() != ''
-            
-            if divisor is None or divisor == 0: divisor = 1.0
+
+            if divisor is None or divisor == 0:
+                # Fallback only for a clearly declared bulk unit such as
+                # "100 Nos"; do not inspect an unrelated legacy rate column.
+                unit_text = clean_text(row.iloc[2]) if len(row) > 2 else ""
+                unit_prefix = re.match(r'^\s*(\d+(?:\.\d+)?)\s+', unit_text)
+                divisor = float(unit_prefix.group(1)) if unit_prefix else 1.0
+                has_explicit = unit_prefix is not None
 
             dsr_dict[code] = {
                 'desc': clean_text(row.iloc[1]),

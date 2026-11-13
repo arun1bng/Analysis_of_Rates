@@ -1,0 +1,140 @@
+database,category,item_or_component_code,saved_value,expected_or_comparison,difference,details
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1 BY MECHANICAL TRANSPORT INCLUDING LOADING,UNLOADING AND STACKING / 0001",5,900,-895,Analysis description: 2; basic-rate description: Hire charges of Coaltar Boiler 900 to 1400 litres. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0001",3,900,-897,Analysis description: ; basic-rate description: Hire charges of Coaltar Boiler 900 to 1400 litres. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0001",7.11,900,-892.89,Analysis description: km; basic-rate description: Hire charges of Coaltar Boiler 900 to 1400 litres. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0002",6.48,900,-893.52,Analysis description: km; basic-rate description: Hire charges of Concrete Mixer 0.25 to 0.40 cum with Hopper. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0003",5.96,3350,-3344.04,Analysis description: km; basic-rate description: Hire charges of Diesel Road Roller - 8 to 10 tonne. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0004",5.54,450,-444.46,Analysis description: km; basic-rate description: Production cost of concrete by batch mix plant. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0005",5.19,4400,-4394.81,Analysis description: km; basic-rate description: Hire charges of Diesel Truck - 9 tonne (with POL). Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0006",4.9,250,-245.1,Analysis description: km; basic-rate description: Hire charges of Spraying machine including electric charges. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0007",4.66,400,-395.34,Analysis description: km; basic-rate description: Hire charges of Coaltar Sprayer. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0008",4.44,8600,-8595.56,"Analysis description: km; basic-rate description: Hire charges of Barber green, drying, mixing and Asphalt Plant, with accessories, capacity 30/45 tonne. Non-zero rate differs from catalog; confirm source."
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0009",4.26,250,-245.74,"Analysis description: km; basic-rate description: Pumping charges of concrete including Hire charges of pump, piping work & accessories etc.. Non-zero rate differs from catalog; confirm source."
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0010",4.1,850,-845.9,Analysis description: km; basic-rate description: Hire charges of Derrick monkey rope. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0011",3.95,800,-796.05,Analysis description: km; basic-rate description: Hire charges of Pump set of capacity 4000 litres/hour. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0012",3.83,400,-396.17,Analysis description: km; basic-rate description: Vibrator (Needle type 40 mm). Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0013",3.71,350,-346.29,Analysis description: km; basic-rate description: Machine for rubbing of floors. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0014",3.61,6700,-6696.39,Analysis description: km; basic-rate description: Front end loader capacity 1.00 cum. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0015",3.51,3350,-3346.49,Analysis description: km; basic-rate description: Hire and running charges of Tripod and Mechanical Winch machine complete with power unit and accessories. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0016",3.43,850,-846.57,Analysis description: km; basic-rate description: Mastic Cooker. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0017",3.35,4200,-4196.65,Analysis description: km; basic-rate description: Hire and running charges of tipper. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0018",3.28,6700,-6696.72,Analysis description: km; basic-rate description: Hire and running charges of loader. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0019",3.21,300,-296.79,Analysis description: km; basic-rate description: Hand Grinder for mirror polish. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0020",3.15,7850,-7846.85,Analysis description: km; basic-rate description: Hydraulic Excavator (3D) with driver and fuel. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0021",3.09,300,-296.91,Analysis description: km; basic-rate description: Pin vibrator. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0022",3.04,350,-346.96,Analysis description: km; basic-rate description: Surface Vibrator. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0023",2.99,3950,-3947.01,Analysis description: km; basic-rate description: Hot Bitumen Mixer 0.5 cum i/c hand cart. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0024",2.95,39500,-39497.05,Analysis description: km; basic-rate description: Hire and running charges of hydraulic piling rig with power unit etc. including complete accessories and shifting at site. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0025",2.9,3900,-3897.1,Analysis description: km; basic-rate description: Hire and running charges of light crane. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0026",2.86,3350,-3347.14,Analysis description: km; basic-rate description: Hire and running charges of bentonite pump. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0027",2.83,33500,-33497.17,Analysis description: km; basic-rate description: Hire and running charges of vibrating pile driving hammer complete with power unit and accessories. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0028",2.79,7850,-7847.21,Analysis description: km; basic-rate description: Hire and running charges of crane 20 tonne capacity. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0029",2.76,40,-37.24,Analysis description: km; basic-rate description: Carriage of ready mixed concrete by rotatory transit mixer. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,"1.1BYMECHANICALTRANSPORTINCLUDINGLOADING,UNLOADINGANDSTACKING: / 0030",2.73,3350,-3347.27,Analysis description: km; basic-rate description: Generator 250 KVA. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,0114BELDARS9.20NOS(X) / 0001,5,900,-895,Analysis description: 2; basic-rate description: Hire charges of Coaltar Boiler 900 to 1400 litres. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,2.24.1,0.2,0,0.2,DAR rate disagrees with terminal Say row in analysis 146.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,2.24.1,0.2,0,0.2,DAR rate disagrees with Cost of 1 row in analysis 146.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,2.24.2,0.25,0,0.25,DAR rate disagrees with terminal Say row in analysis 147.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,2.24.2,0.25,0,0.25,DAR rate disagrees with Cost of 1 row in analysis 147.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,5.3,11505.5,383.5,11122,DAR rate disagrees with terminal Say row in analysis 284.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,5.3,11505.5,383.52,11121.98,DAR rate disagrees with Cost of 1 row in analysis 284.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,5.20,9663.25,18.15,9645.1,DAR rate disagrees with terminal Say row in analysis 344.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,5.20,9663.25,18.17,9645.08,DAR rate disagrees with Cost of 1 row in analysis 344.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,5.30,78.4,68.9,9.5,DAR rate disagrees with terminal Say row in analysis 381.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,5.30,78.4,68.89,9.510000000000005,DAR rate disagrees with Cost of 1 row in analysis 381.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,6.20,18975.15,1.6,18973.550000000003,DAR rate disagrees with terminal Say row in analysis 470.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,6.20,18975.15,1.6,18973.550000000003,DAR rate disagrees with Cost of 1 row in analysis 470.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,6.40,1023.6,14.8,1008.8000000000001,DAR rate disagrees with terminal Say row in analysis 507.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,6.40,1023.6,14.78,1008.82,DAR rate disagrees with Cost of 1 row in analysis 507.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,6.44 / 9999,2.12,2.27,-0.1499999999999999,Analysis description: Excavation and disposal of surplus earth; basic-rate description: Sundries. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,6.44 / 2602,4590,4724,-134,Analysis description: Common burnt clay F.P.S. (non modular) bricks class designation 7.5; basic-rate description: Common burnt clay F.P.S. (non modular) bricks class designation 7.5. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,6.44 / 0155,749,857,-108,Analysis description: Mason (average); basic-rate description: Mason (average). Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,6.44 / 0114,645,736,-91,Analysis description: Beldar; basic-rate description: Beldar. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,6.44 / 0101,714,816,-102,Analysis description: Bhisti; basic-rate description: Bhisti. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,6.44 / 9999,2.12,2.27,-0.1499999999999999,Analysis description: Sundries; basic-rate description: Sundries. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,6.47 / 8655,4004,2915,1089,Analysis description: Autoclaved aerated concrete (AAC) blocks (grade 1 of density 551 to 650 kg/cum); basic-rate description: Autoclaved aerated concrete (AAC) blocks (grade 1 of density 551 to 650 kg/cum). Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,7.30,2159.9,2.4,2157.5,DAR rate disagrees with terminal Say row in analysis 583.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,7.30,2159.9,2.42,2157.48,DAR rate disagrees with Cost of 1 row in analysis 583.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,9.50,1641.15,2.4,1638.75,DAR rate disagrees with terminal Say row in analysis 844.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,9.50,1641.15,2.4,1638.75,DAR rate disagrees with Cost of 1 row in analysis 844.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,9.80,74.25,15.1,59.15,DAR rate disagrees with terminal Say row in analysis 948.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,9.80,74.25,15.12,59.13,DAR rate disagrees with Cost of 1 row in analysis 948.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,9.110,689.4,3.35,686.05,DAR rate disagrees with terminal Say row in analysis 1028.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,9.110,689.4,3.33,686.0699999999999,DAR rate disagrees with Cost of 1 row in analysis 1028.
+backend\CPWD_Software_Backend.db,ANALYSIS_RATE_VS_BASIC_RATE,9.147.A3.1 / 7217,70,76,-6,Analysis description: SS anchor Fasteners (RCC / Brick) – M-8x75mm / M-10x100mm; basic-rate description: SS anchor Fasteners with sleeve (RCC / Brick) – M-8x75mm/ M-10x100mm. Non-zero rate differs from catalog; confirm source.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,9.150,204,16.4,187.6,DAR rate disagrees with terminal Say row in analysis 1202.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,9.150,204,16.4,187.6,DAR rate disagrees with Cost of 1 row in analysis 1202.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,10.2,159.35,133.7,25.650000000000006,DAR rate disagrees with terminal Say row in analysis 1242.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,10.2,159.35,133.7,25.650000000000006,DAR rate disagrees with Cost of 1 row in analysis 1242.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,11.4,1439.4,978.45,460.95000000000005,DAR rate disagrees with terminal Say row in analysis 1317.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,11.4,1439.4,978.44,460.96000000000004,DAR rate disagrees with Cost of 1 row in analysis 1317.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,11.5,13.3,10561.75,-10548.45,DAR rate disagrees with terminal Say row in analysis 1318.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,11.5,13.3,10561.73,-10548.43,DAR rate disagrees with Cost of 1 row in analysis 1318.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,11.40,1439.4,15.95,1423.45,DAR rate disagrees with terminal Say row in analysis 1418.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,11.40,1439.4,15.97,1423.43,DAR rate disagrees with Cost of 1 row in analysis 1418.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,11.50,13.3,1.6,11.700000000000001,DAR rate disagrees with terminal Say row in analysis 1469.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,11.50,13.3,1.6,11.700000000000001,DAR rate disagrees with Cost of 1 row in analysis 1469.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,12.20,709.75,16.2,693.55,DAR rate disagrees with terminal Say row in analysis 1533.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,12.20,709.75,16.19,693.56,DAR rate disagrees with Cost of 1 row in analysis 1533.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,12.50,738.65,290.05,448.59999999999997,DAR rate disagrees with terminal Say row in analysis 1624.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,12.50,738.65,290.07,448.58,DAR rate disagrees with Cost of 1 row in analysis 1624.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,12.60,667.05,16.95,650.0999999999999,DAR rate disagrees with terminal Say row in analysis 1648.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,12.60,667.05,16.96,650.0899999999999,DAR rate disagrees with Cost of 1 row in analysis 1648.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,13.20,829.95,20,809.95,DAR rate disagrees with terminal Say row in analysis 1717.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,13.20,829.95,20,809.95,DAR rate disagrees with Cost of 1 row in analysis 1717.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,13.30,21.45,214.55,-193.10000000000002,DAR rate disagrees with terminal Say row in analysis 1742.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,13.30,21.45,214.53,-193.08,DAR rate disagrees with Cost of 1 row in analysis 1742.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,13.70,96.1,22.1,74,DAR rate disagrees with terminal Say row in analysis 1826.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,13.70,96.1,22.09,74.00999999999999,DAR rate disagrees with Cost of 1 row in analysis 1826.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,13.80,156.05,17.85,138.20000000000002,DAR rate disagrees with terminal Say row in analysis 1838.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,13.80,156.05,17.87,138.18,DAR rate disagrees with Cost of 1 row in analysis 1838.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,14.20,126,34.2,91.8,DAR rate disagrees with terminal Say row in analysis 1959.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,14.20,126,34.21,91.78999999999999,DAR rate disagrees with Cost of 1 row in analysis 1959.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,15.3,253.9,355.15,-101.24999999999997,DAR rate disagrees with terminal Say row in analysis 2046.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,15.3,253.9,355.13,-101.22999999999999,DAR rate disagrees with Cost of 1 row in analysis 2046.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,15.5,4623.7,1147.2,3476.5,DAR rate disagrees with terminal Say row in analysis 2048.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,15.5,4623.7,1147.22,3476.4799999999996,DAR rate disagrees with Cost of 1 row in analysis 2048.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,15.6,263.95,857,-593.05,DAR rate disagrees with terminal Say row in analysis 2049.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,15.6,263.95,856.99,-593.04,DAR rate disagrees with Cost of 1 row in analysis 2049.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,15.20,0.85,249.4,-248.55,DAR rate disagrees with terminal Say row in analysis 2088.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,15.20,0.85,249.4,-248.55,DAR rate disagrees with Cost of 1 row in analysis 2088.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,15.30,253.9,24.35,229.55,DAR rate disagrees with terminal Say row in analysis 2102.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,15.30,253.9,24.37,229.53,DAR rate disagrees with Cost of 1 row in analysis 2102.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,15.50,4623.7,2.35,4621.349999999999,DAR rate disagrees with terminal Say row in analysis 2143.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,15.50,4623.7,2.37,4621.33,DAR rate disagrees with Cost of 1 row in analysis 2143.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,15.60,263.95,2.2,261.75,DAR rate disagrees with terminal Say row in analysis 2158.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,15.60,263.95,2.19,261.76,DAR rate disagrees with Cost of 1 row in analysis 2158.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,16.2,66.15,6.9,59.25000000000001,DAR rate disagrees with terminal Say row in analysis 2160.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,16.2,66.15,6.9,59.25000000000001,DAR rate disagrees with Cost of 1 row in analysis 2160.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,16.4,88.55,10.45,78.1,DAR rate disagrees with terminal Say row in analysis 2172.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,16.4,88.55,10.47,78.08,DAR rate disagrees with Cost of 1 row in analysis 2172.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,16.9,2017.6,332.95,1684.6499999999999,DAR rate disagrees with terminal Say row in analysis 2182.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,16.9,2017.6,332.93,1684.6699999999998,DAR rate disagrees with Cost of 1 row in analysis 2182.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,16.20,66.15,77.7,-11.549999999999997,DAR rate disagrees with terminal Say row in analysis 2200.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,16.20,66.15,77.72,-11.569999999999993,DAR rate disagrees with Cost of 1 row in analysis 2200.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,16.40,88.55,148.85,-60.3,DAR rate disagrees with terminal Say row in analysis 2249.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,16.40,88.55,148.85,-60.3,DAR rate disagrees with Cost of 1 row in analysis 2249.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,16.50,206.3,19.45,186.85000000000002,DAR rate disagrees with terminal Say row in analysis 2266.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,16.50,206.3,19.45,186.85000000000002,DAR rate disagrees with Cost of 1 row in analysis 2266.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,16.80,4148.65,560.3,3588.3499999999995,DAR rate disagrees with terminal Say row in analysis 2322.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,16.80,4148.65,560.3,3588.3499999999995,DAR rate disagrees with Cost of 1 row in analysis 2322.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,16.90,2017.6,13.9,2003.6999999999998,DAR rate disagrees with terminal Say row in analysis 2335.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,17.8,7979.2,1683.35,6295.85,DAR rate disagrees with terminal Say row in analysis 2382.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,17.8,7979.2,1683.35,6295.85,DAR rate disagrees with Cost of 1 row in analysis 2382.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,17.30,55.65,1.45,54.199999999999996,DAR rate disagrees with terminal Say row in analysis 2446.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,17.30,55.65,1.45,54.199999999999996,DAR rate disagrees with Cost of 1 row in analysis 2446.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,17.80,7979.2,1.55,7977.65,DAR rate disagrees with terminal Say row in analysis 2678.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,17.80,7979.2,1.55,7977.65,DAR rate disagrees with Cost of 1 row in analysis 2678.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,19.20,787,2.8,784.2,DAR rate disagrees with terminal Say row in analysis 3613.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,19.20,787,2.81,784.19,DAR rate disagrees with Cost of 1 row in analysis 3613.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,26.4,902.55,1498.1,-595.55,DAR rate disagrees with terminal Say row in analysis 3904.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,26.4,902.55,1498.12,-595.5699999999999,DAR rate disagrees with Cost of 1 row in analysis 3904.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,26.6,136.45,268.9,-132.45,DAR rate disagrees with terminal Say row in analysis 3906.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,26.6,136.45,268.92,-132.47000000000003,DAR rate disagrees with Cost of 1 row in analysis 3906.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_SAY,26.40,902.55,15,887.55,DAR rate disagrees with terminal Say row in analysis 3999.
+backend\CPWD_Software_Backend.db,DAR_RATE_VS_COST_OF_ONE,26.40,902.55,15,887.55,DAR rate disagrees with Cost of 1 row in analysis 3999.
+backend\CPWD_Software_Backend.db,BASE_TOTAL_VS_CR_SUM,49.10,427340.95999999996,363239.81999999995,64101.140000000014,Base TOTAL before financial additions differs from cost-row amounts in analysis 4164.
+backend\CPWD_Software_Backend.db,BASE_TOTAL_VS_CR_SUM,49.15,8948.24,5368.94,3579.3,Base TOTAL before financial additions differs from cost-row amounts in analysis 4169.
+backend\CPWD_Software_Backend.db,BASE_TOTAL_VS_CR_SUM,49.16,3803.09,4183.400000000001,-380.3100000000004,Base TOTAL before financial additions differs from cost-row amounts in analysis 4170.
+backend\projects\temp_estimate_1793539306783-b79f9775.db,PROJECT_SNAPSHOT_STALE_DSR_RATE,5.3,78.4,11505.5,-11427.1,Saved measurement snapshot differs from canonical DSR master; review item source and do not auto-overwrite project data.
+backend\projects\temp_estimate_1793539306783-b79f9775.db,PROJECT_SNAPSHOT_STALE_DSR_RATE,5.3,78.4,11505.5,-11427.1,Saved measurement snapshot differs from canonical DSR master; review item source and do not auto-overwrite project data.

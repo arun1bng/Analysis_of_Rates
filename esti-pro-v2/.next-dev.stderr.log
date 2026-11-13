@@ -1,0 +1,139 @@
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\Users\GIRISHA K\esti-pro\package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * C:\Users\GIRISHA K\esti-pro\esti-pro-v2\package-lock.json
+
+⨯ SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>) {
+  page: '/api/rate-analysis'
+}
+⨯ SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>) {
+  page: '/api/rate-analysis'
+}
+⨯ The directory at "C:\Users\GIRISHA K\esti-pro\esti-pro-v2\.next\dev" was deleted.
+
+Deleting this directory removes caches and will cause slower performance.
+
+Deleting this directory while Next.js is running can lead to undefined behavior. Restarting the server to recover...
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\Users\GIRISHA K\esti-pro\package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * C:\Users\GIRISHA K\esti-pro\esti-pro-v2\package-lock.json
+
+⨯ The directory at "C:\Users\GIRISHA K\esti-pro\esti-pro-v2\.next" was deleted.
+
+Deleting this directory removes caches and will cause slower performance.
+
+Deleting this directory while Next.js is running can lead to undefined behavior. Restarting the server to recover...
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\Users\GIRISHA K\esti-pro\package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * C:\Users\GIRISHA K\esti-pro\esti-pro-v2\package-lock.json
+
+⨯ ./app/utils/exportRANsItemsToExcel.ts
+Error:   x A 'continue' statement can only jump to a label of an enclosing iteration statement
+     ,-[C:\Users\GIRISHA K\esti-pro\esti-pro-v2\app\utils\exportRANsItemsToExcel.ts:263:1]
+ 260 |   // Pass 2 resolves internal links, including links to items printed later in the sheet.
+ 261 |   cellsNeedingHyperlinks.forEach(({ cell, targetItemCode }) => {
+ 262 |     const targetRowNumber = itemCodeToRowMap[targetItemCode];
+ 263 |     if (!targetRowNumber) continue;
+     :                           ^^^^^^^^^
+ 264 |     const displayCode = text(cell.value);
+ 265 |     cell.value = {
+ 266 |       text: displayCode,
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/utils/exportRANsItemsToExcel.ts
+./app/components/RateAnalysisDSR.tsx
+./app/page.tsx
+[browser] ./app/utils/exportRANsItemsToExcel.ts
+Error:   x A 'continue' statement can only jump to a label of an enclosing iteration statement
+     ,-[C:\Users\GIRISHA K\esti-pro\esti-pro-v2\app\utils\exportRANsItemsToExcel.ts:263:1]
+ 260 |   // Pass 2 resolves internal links, including links to items printed later in the sheet.
+ 261 |   cellsNeedingHyperlinks.forEach(({ cell, targetItemCode }) => {
+ 262 |     const targetRowNumber = itemCodeToRowMap[targetItemCode];
+ 263 |     if (!targetRowNumber) continue;
+     :                           ^^^^^^^^^
+ 264 |     const displayCode = text(cell.value);
+ 265 |     cell.value = {
+ 266 |       text: displayCode,
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/utils/exportRANsItemsToExcel.ts
+./app/components/RateAnalysisDSR.tsx
+./app/page.tsx 
+[browser] ./app/utils/exportRANsItemsToExcel.ts
+Error:   x A 'continue' statement can only jump to a label of an enclosing iteration statement
+     ,-[C:\Users\GIRISHA K\esti-pro\esti-pro-v2\app\utils\exportRANsItemsToExcel.ts:263:1]
+ 260 |   // Pass 2 resolves internal links, including links to items printed later in the sheet.
+ 261 |   cellsNeedingHyperlinks.forEach(({ cell, targetItemCode }) => {
+ 262 |     const targetRowNumber = itemCodeToRowMap[targetItemCode];
+ 263 |     if (!targetRowNumber) continue;
+     :                           ^^^^^^^^^
+ 264 |     const displayCode = text(cell.value);
+ 265 |     cell.value = {
+ 266 |       text: displayCode,
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/utils/exportRANsItemsToExcel.ts
+./app/components/RateAnalysisDSR.tsx
+./app/page.tsx 
+[browser] ./app/utils/exportRANsItemsToExcel.ts
+Error:   x A 'continue' statement can only jump to a label of an enclosing iteration statement
+     ,-[C:\Users\GIRISHA K\esti-pro\esti-pro-v2\app\utils\exportRANsItemsToExcel.ts:263:1]
+ 260 |   // Pass 2 resolves internal links, including links to items printed later in the sheet.
+ 261 |   cellsNeedingHyperlinks.forEach(({ cell, targetItemCode }) => {
+ 262 |     const targetRowNumber = itemCodeToRowMap[targetItemCode];
+ 263 |     if (!targetRowNumber) continue;
+     :                           ^^^^^^^^^
+ 264 |     const displayCode = text(cell.value);
+ 265 |     cell.value = {
+ 266 |       text: displayCode,
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/utils/exportRANsItemsToExcel.ts
+./app/components/RateAnalysisDSR.tsx
+./app/page.tsx 
+[browser] ./app/utils/exportRANsItemsToExcel.ts
+Error:   x A 'continue' statement can only jump to a label of an enclosing iteration statement
+     ,-[C:\Users\GIRISHA K\esti-pro\esti-pro-v2\app\utils\exportRANsItemsToExcel.ts:263:1]
+ 260 |   // Pass 2 resolves internal links, including links to items printed later in the sheet.
+ 261 |   cellsNeedingHyperlinks.forEach(({ cell, targetItemCode }) => {
+ 262 |     const targetRowNumber = itemCodeToRowMap[targetItemCode];
+ 263 |     if (!targetRowNumber) continue;
+     :                           ^^^^^^^^^
+ 264 |     const displayCode = text(cell.value);
+ 265 |     cell.value = {
+ 266 |       text: displayCode,
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/utils/exportRANsItemsToExcel.ts
+./app/components/RateAnalysisDSR.tsx
+./app/page.tsx 

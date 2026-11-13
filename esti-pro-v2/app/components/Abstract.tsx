@@ -1,7 +1,15 @@
 import { buildHierarchicalRows } from "../utils/dsrHierarchy";
 import { calculateAbstractTotals } from "../utils/abstractTotals";
 import React, { useState, useRef } from "react";
-import { exportAbstractOfCostToExcel } from "../utils/exportTableToExcel";
+import { buildAbstractSheetLayout, exportAbstractOfCostToExcel, exportEstimateWorksheetToPdf } from "../utils/exportTableToExcel";
+
+const firstNonEmptyText = (...values: unknown[]) => {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+};
 
 const HighlightText = ({ text, query, highlightClass }: { text: string, query: string, highlightClass: string }) => {
   if (!query || typeof text !== 'string') return <>{text}</>;
@@ -98,9 +106,14 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
     if (!aggregatedItems[safeCode]) {
       aggregatedItems[safeCode] = {
         itemCode: safeCode,
-        description: rates.find((r: any) => r.code?.toString() === safeCode)?.description ?? row.description ?? "",
-        unit: row.unit,
-        rate: row.rate,
+        description: firstNonEmptyText(
+          row.userDescription,
+          rates.find((r: any) => r.code?.toString() === safeCode)?.description,
+          rates.find((r: any) => r.code?.toString() === safeCode)?.item_description,
+          row.description,
+        ),
+        unit: firstNonEmptyText(rates.find((r: any) => r.code?.toString() === safeCode)?.unit, row.unit),
+        rate: rates.find((r: any) => r.code?.toString() === safeCode)?.rate ?? row.rate,
         quantity: 0
       };
     }
@@ -124,7 +137,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
 
   const sortedSHNames = Object.keys(groupedItems).sort((a, b) => extractSHNum(a) - extractSHNum(b));
   const { totalDSR, ciRate, ciAmount, subtotalDSR_CI, modifiedDSR, nsrTotal, baseCombined } =
-    calculateAbstractTotals(estimateRows, projectDetails, marketRates);
+    calculateAbstractTotals(estimateRows, projectDetails, marketRates, rates);
   const modFactor = Number(projectDetails.gstModificationFactor) || 1;
 
   const epfRate = (Number(projectDetails.epf) || 0) / 100;
@@ -200,7 +213,7 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
             )}
           </div>
           <button type="button" onClick={() => void exportAbstractOfCostToExcel(exportRootRef.current, String(projectDetails?.nameOfWork || ""), "Abstract_of_Cost", projectDetails || {}, String(projectDetails?.estimateId || "N/A"), { estimateRows, rates, marketRates, projectDetails: projectDetails || {} })} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📊 Abs. Excel</button>
-          <button className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 Abs. PDF</button>
+          <button type="button" onClick={() => exportEstimateWorksheetToPdf("Abstract of Cost", String(projectDetails?.estimateId || "N/A"), worksheet => buildAbstractSheetLayout(worksheet, { estimateRows, rates, marketRates, projectDetails: projectDetails || {} }, String(projectDetails?.estimateId || "N/A")))} className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 Abs. PDF</button>
         </div>
       </div>
 
@@ -260,8 +273,16 @@ export default function Abstract({ estimateRows = [], setEstimateRows, rates = [
 
                   {uniqueCodes.map((itemCode) => {
                     const item = items.find(i => i.itemCode === itemCode);
-                    const baseItemDesc = hierarchyItemByCode.get(itemCode)?.description ?? rates.find((r: any) => r.code?.toString() === itemCode)?.description ?? item.description ?? "";
-                    const mRate = marketRates[itemCode] !== undefined ? Number(marketRates[itemCode]) : (Number(item.rate) || 0);
+                    const currentRateItem = rates.find((r: any) => r.code?.toString() === itemCode);
+                    const baseItemDesc = firstNonEmptyText(
+                      hierarchyItemByCode.get(itemCode)?.description,
+                      currentRateItem?.description,
+                      currentRateItem?.item_description,
+                      item.description,
+                    );
+                    const mRate = (itemCode.startsWith("51.") || itemCode.startsWith("NSR")) && marketRates[itemCode] !== undefined && marketRates[itemCode] !== null
+                      ? Number(marketRates[itemCode])
+                      : (Number(currentRateItem?.rate ?? currentRateItem?.dsrRate ?? item.rate) || 0);
                     const itemAmount = Math.round(mRate * (Number(item.quantity) || 1));
                     
                     const ancestors = sectionRows

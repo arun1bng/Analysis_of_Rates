@@ -1,17 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { usePageTools } from "./PageToolsContext";
-import { exportTableToExcel } from "../utils/exportTableToExcel";
+import { exportRateListSingleSheetToExcel, exportRateListSingleSheetToPdf } from "../utils/exportJustfnToExcel";
+import { openEstimatePdfWindow } from "../utils/exportTableToExcel";
 
 type RateRow = { code: string; description: string; unit: string; dsrRate: number; carriage: boolean; sl: number };
 type RateGroup = { id: string; title: string; items: RateRow[] };
 
 const GROUP_TITLES: Record<string, string> = {
-  "0.1": "0.1 BASIC RATES OF MATERIALS (0222–9999 EXCEPT 2200–2358)",
-  "0.2": "0.2 BASIC RATES OF LABOUR (0100–0221)",
-  "0.3": "0.3 BASIC RATES OF HIRE CHARGES OF PLANTS AND MACHINERY (0001–0099)",
-  "0.4": "0.4 BASIC RATES OF CARRIAGE OF MATERIALS (2200–2358)",
+  materials: "Materials",
+  labour: "Labour",
+  machinery: "Hire charges of plants and machinery",
+  carriage: "Carriage of materials",
 };
-const GROUP_ORDER = ["0.1", "0.2", "0.3", "0.4"];
+const GROUP_ORDER = ["materials", "labour", "machinery", "carriage"];
 const CLC_SKILL_BY_BASE_RATE: Record<string, string> = {
   "736.00": "unskilled",
   "816.00": "semiSkilled",
@@ -42,15 +43,28 @@ const CLC_PERIODS = (() => {
 function categoryForCode(code: string) {
   if (!/^\d+$/.test(code)) return null;
   const value = Number(code);
-  if (value >= 222 && value <= 9999 && !(value >= 2200 && value <= 2358)) return "0.1";
-  if (value >= 100 && value <= 221) return "0.2";
-  if (value >= 1 && value <= 99) return "0.3";
-  if (value >= 2200 && value <= 2358) return "0.4";
+  if (value >= 222 && value <= 9999 && !(value >= 2200 && value <= 2358)) return "materials";
+  if (value >= 100 && value <= 221) return "labour";
+  if (value >= 1 && value <= 99) return "machinery";
+  if (value >= 2200 && value <= 2358) return "carriage";
   return null;
 }
 
 function normalizeBasicCode(code: string) {
-  return code.trim().replace(/\*+$/, "");
+  const normalized = code.trim().replace(/\*+$/, "");
+  return /^\d+$/.test(normalized) ? String(Number(normalized)) : normalized;
+}
+
+function lookupCodeValue<T>(values: Record<string, T> | undefined, code: string): T | undefined {
+  if (!values) return undefined;
+  if (Object.prototype.hasOwnProperty.call(values, code)) {
+    const exact = values[code];
+    if (exact !== null && exact !== undefined && String(exact).trim() !== "") return exact;
+  }
+  const normalized = normalizeBasicCode(code);
+  return Object.entries(values).find(([key, value]) =>
+    normalizeBasicCode(key) === normalized && value !== null && value !== undefined && String(value).trim() !== "",
+  )?.[1];
 }
 
 function isNSCode(code: string) {
@@ -73,25 +87,21 @@ function sortRateCodes(a: string, b: string) {
   return Number(a) - Number(b) || a.localeCompare(b);
 }
 
-export default function RateList({ theme = "dark", marketRates, setMarketRates, estimateRows = [], selectedCodes = [], rates = [], projectId = "", onSaveRates }: any) {
+export default function RateList({ theme = "dark", marketRates, setMarketRates, estimateRows = [], selectedCodes = [], rates = [], projectId = "", onSaveRates, analysisSnapshot = {}, nsrItems = [], projectDetails = {}, setProjectDetails }: any) {
   const { registerPageTools } = usePageTools();
   const findContainerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => registerPageTools("ratelist", {
-    searchContainerRef: findContainerRef,
-    exportActions: [{
-      id: "export-rate-list-excel",
-      label: "📊 Export Rate List Excel",
-      onClick: () => exportTableToExcel(findContainerRef.current, "Rate List", "Rate_List"),
-      className: "bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow",
-    }],
-  }), [registerPageTools]);
+  useEffect(() => registerPageTools("ratelist", { searchContainerRef: findContainerRef }), [registerPageTools]);
   const [analysisRowsByCode, setAnalysisRowsByCode] = useState<Record<string, Record<string, any>[]>>({});
   const [loading, setLoading] = useState(false);
   const [savingRates, setSavingRates] = useState(false);
   const [draftRates, setDraftRates] = useState<Record<string, string>>({});
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({ sl: 92, code: 128, description: 520, unit: 100, dsr: 150, market: 180 });
-  const [period, setPeriod] = useState("2026-10");
-  const [area, setArea] = useState("B");
+  const [period, setPeriod] = useState(String(projectDetails?.clcPeriod || "2026-10"));
+  const [area, setArea] = useState(String(projectDetails?.clcArea || "B"));
+  useEffect(() => {
+    if (projectDetails?.clcPeriod) setPeriod(String(projectDetails.clcPeriod));
+    if (projectDetails?.clcArea) setArea(String(projectDetails.clcArea));
+  }, [projectDetails?.clcPeriod, projectDetails?.clcArea]);
   const editableRateCodeSet = useMemo(() => {
     const editableCodes = new Set((selectedCodes as string[])
       .map(normalizeBasicCode)
@@ -102,7 +112,7 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
       const parentCode = queue.shift()!;
       if (visited.has(parentCode)) continue;
       visited.add(parentCode);
-      for (const row of analysisRowsByCode[parentCode] || []) {
+      for (const row of analysisRowsByCode[parentCode] || analysisRowsByCode[normalizeBasicCode(parentCode)] || []) {
         const code = normalizeBasicCode(rateAnalysisCode(row));
         if (!code) continue;
         if (categoryForCode(code)) editableCodes.add(code);
@@ -120,19 +130,23 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
         if (["NCR", "SCR", "CALC_SNAPSHOT"].includes(String(row.row_type || "").toUpperCase())) continue;
         const rawCode = rateAnalysisCode(row);
         const code = normalizeBasicCode(rawCode);
-        if (!code || isNSCode(code)) continue;
+        if (!code) continue;
         const group = categoryForCode(code);
-        if (!group) continue;
+        if (!group || !editableRateCodeSet.has(code)) continue;
         const basicItem = rateByCode.get(code);
-        if (!basicItem) continue;
         const parsedDsrRate = Number(row.rate);
-        const dsrRate = Number.isFinite(parsedDsrRate) && parsedDsrRate > 0 ? parsedDsrRate : Number(basicItem.rate) || 0;
+        const parsedBasicRate = Number(basicItem?.rate);
+        // Rate List's DSR column must stay tied to the master basic-rate row.
+        // Analysis rows may already contain a market-adjusted rate.
+        const dsrRate = Number.isFinite(parsedBasicRate)
+          ? parsedBasicRate
+          : Number.isFinite(parsedDsrRate) ? parsedDsrRate : 0;
         const current: RateRow = {
-          code,
-          description: basicItem.description,
-          unit: String(basicItem.unit ?? "").trim(),
+          code: String(basicItem?.code ?? rawCode).trim(),
+          description: String(basicItem?.description ?? row.description ?? "").trim(),
+          unit: String(basicItem?.unit ?? row.unit ?? "").trim(),
           dsrRate,
-          carriage: group === "0.4",
+          carriage: group === "carriage",
           sl: 0,
         };
         const previous = rowsByGroup[group].get(code);
@@ -146,23 +160,28 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
         .sort((a, b) => sortRateCodes(a.code, b.code))
         .map((item, index) => ({ ...item, sl: index + 1 })),
     })) as RateGroup[];
-  }, [analysisRowsByCode, rateByCode]);
+  }, [analysisRowsByCode, rateByCode, editableRateCodeSet]);
   const visibleGroups = rateGroups;
 
   useEffect(() => {
     let cancelled = false;
     const loadAnalyses = async () => {
       setLoading(true);
-      const queue: string[] = [...new Set<string>(estimateRows.map((item: any) => String(item.itemCode || "").trim()).filter((code: string) => Boolean(code) && !isNSCode(code)))];
+      const queue: string[] = [...new Set<string>((selectedCodes as string[]).map(code => String(code).trim()).filter(Boolean))];
       const visited = new Set<string>();
       const result: Record<string, Record<string, any>[]> = {};
       let depth = 0;
       while (queue.length && depth < 8) {
-        const batch = queue.splice(0, queue.length).filter(code => !visited.has(code) && !isNSCode(code));
+        const batch = queue.splice(0, queue.length).filter(code => !visited.has(code));
         if (!batch.length) break;
         batch.forEach(code => visited.add(code));
         const fetched = await Promise.all(batch.map(async code => {
           try {
+            const snapshot = analysisSnapshot[code] ?? Object.entries(analysisSnapshot).find(([key]) => normalizeBasicCode(key) === normalizeBasicCode(code))?.[1];
+            if (Array.isArray(snapshot)) return [code, snapshot as Record<string, any>[]] as const;
+            if (Array.isArray((snapshot as any)?.rows)) return [code, (snapshot as any).rows as Record<string, any>[]] as const;
+            const customItem = (nsrItems as any[]).find(item => String(item.code || "").trim() === code);
+            if (Array.isArray(customItem?.analysisRows)) return [code, customItem.analysisRows as Record<string, any>[]] as const;
             const response = await fetch(`/api/rate-analysis?code=${encodeURIComponent(code)}`);
             const data = await response.json();
             return [code, response.ok && Array.isArray(data) ? data as Record<string, any>[] : []] as const;
@@ -173,24 +192,30 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
         }));
         for (const [code, rows] of fetched) {
           result[code] = rows;
+          result[normalizeBasicCode(code)] = rows;
           for (const row of rows) {
             if (!isSubAnalysis(row)) continue;
             const childCode = rateAnalysisCode(row);
-            if (childCode && !isNSCode(childCode) && !visited.has(childCode)) queue.push(childCode);
+            if (childCode && !visited.has(childCode)) queue.push(childCode);
           }
         }
         depth++;
       }
       if (!cancelled) { setAnalysisRowsByCode(result); setLoading(false); }
     };
-    loadAnalyses();
+    if (selectedCodes.length > 0) loadAnalyses();
+    else { setAnalysisRowsByCode({}); setLoading(false); }
     return () => { cancelled = true; };
-  }, [estimateRows]);
+  }, [selectedCodes, analysisSnapshot, nsrItems]);
 
   const handleRateChange = (code: string, value: string, defaultValue: number) => {
     setDraftRates(previous => ({ ...previous, [code]: value }));
     if (value.trim() === "") {
-      setMarketRates((previous: Record<string, number>) => ({ ...previous, [code]: 0 }));
+      setMarketRates((previous: Record<string, number>) => {
+        const next = { ...previous };
+        delete next[code];
+        return next;
+      });
       return;
     }
     const parsed = Number(value);
@@ -217,11 +242,11 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "CLC rates could not be loaded.");
       const wages = data.wages || {};
-      const labourItems = rateGroups.find(group => group.id === "0.2")?.items || [];
+      const labourItems = rateGroups.find(group => group.id === "labour")?.items || [];
       const updates: Record<string, number> = {};
       let skipped = 0;
       for (const item of labourItems) {
-        if (!editableRateCodeSet.has(item.code)) continue;
+        if (!editableRateCodeSet.has(normalizeBasicCode(item.code))) continue;
         if (item.unit.trim().toLowerCase() === "sqm" || ["0162", "0163", "0166"].includes(item.code)) { skipped++; continue; }
         const skillKey = CLC_SKILL_BY_BASE_RATE[item.dsrRate.toFixed(2)];
         const wage = skillKey ? Number(wages[skillKey]) : NaN;
@@ -230,6 +255,13 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
       }
       setMarketRates((previous: Record<string, number>) => ({ ...previous, ...updates }));
       setDraftRates(previous => ({ ...previous, ...Object.fromEntries(Object.entries(updates).map(([code, wage]) => [code, String(wage)])) }));
+      const periodLabel = String(data.periodLabel || CLC_PERIODS.find(option => option.value === period)?.label || period);
+      setProjectDetails?.((previous: Record<string, any>) => ({
+        ...previous,
+        clcPeriod: period,
+        clcPeriodLabel: periodLabel,
+        clcArea: area,
+      }));
       const applied = Object.keys(updates).length;
       alert(`CLC import complete for ${data.periodLabel || period}, ${area} Area. ${applied} labour rates applied; ${skipped} items left unchanged.`);
     } catch (error) {
@@ -239,7 +271,7 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
 
   const saveProjectRates = async () => {
     for (const [code, value] of Object.entries(draftRates)) {
-      if (!editableRateCodeSet.has(normalizeBasicCode(code))) continue;
+      if (!editableRateCodeSet.has(normalizeBasicCode(code)) && categoryForCode(normalizeBasicCode(code)) !== "carriage") continue;
       const raw = String(value).trim();
       if (!raw || raw === ".") continue;
       const parsed = Number(raw);
@@ -252,9 +284,10 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
     const ratesToSave: Record<string, number> = {};
     for (const group of rateGroups) {
       for (const item of group.items) {
-        if (!editableRateCodeSet.has(item.code)) continue;
-        const defaultRate = item.carriage ? 0 : item.dsrRate;
-        const rawRate = marketRates[item.code] !== undefined ? Number(marketRates[item.code]) : defaultRate;
+        if (!editableRateCodeSet.has(normalizeBasicCode(item.code)) && !item.carriage) continue;
+        const defaultRate = item.dsrRate;
+        const currentMarketRate = lookupCodeValue(marketRates, item.code);
+        const rawRate = currentMarketRate !== undefined ? Number(currentMarketRate) : item.carriage ? 0 : defaultRate;
         if (!Number.isFinite(rawRate) || rawRate < 0) {
           alert(`Enter a valid non-negative market rate for item ${item.code} before saving.`);
           return;
@@ -276,10 +309,72 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
     } finally { setSavingRates(false); }
   };
 
+  const exportExcel = async () => {
+    try {
+      await exportRateListSingleSheetToExcel({
+        estimateData: { estimateRows, rates, marketRates, projectDetails },
+        statementRows: estimateRows,
+        justifiedRates: {},
+        baseMarketRates: marketRates,
+        rateListMarketRates: marketRates,
+        summaryInputs: { nitNumber: "", lowestContractor: "", contractorTenderedAmount: "" },
+        analysisSnapshot,
+      }, String(projectDetails?.estimateId || "Estimate"));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not export the Rate List workbook.");
+    }
+  };
+
+  const exportPdf = async () => {
+    const printWindow = openEstimatePdfWindow();
+    if (!printWindow) { alert("Allow pop-ups to export the PDF."); return; }
+    try {
+      await exportRateListSingleSheetToPdf({
+        estimateData: { estimateRows, rates, marketRates, projectDetails },
+        statementRows: estimateRows,
+        justifiedRates: {},
+        baseMarketRates: marketRates,
+        rateListMarketRates: marketRates,
+        summaryInputs: { nitNumber: "", lowestContractor: "", contractorTenderedAmount: "" },
+        analysisSnapshot,
+      }, String(projectDetails?.estimateId || "Estimate"), printWindow);
+    } catch (error) {
+      printWindow.close();
+      alert(error instanceof Error ? error.message : "Could not export the Rate List PDF.");
+    }
+  };
+
   const dark = theme !== "light";
-  const card = dark ? "bg-slate-900 border-slate-700" : "bg-white border-slate-200";
-  const inputClass = dark ? "bg-slate-950 border-slate-600 text-slate-100 focus:border-blue-500" : "bg-white border-slate-300 text-slate-900 focus:border-blue-500";
+  const card = dark ? "bg-slate-900 border-slate-700" : "bg-olive-card border-slate-200";
+  const inputClass = dark ? "bg-slate-950 border-slate-600 text-slate-100 focus:border-blue-500" : "bg-olive-card border-slate-300 text-slate-900 focus:border-blue-500";
   const visibleItems = visibleGroups.flatMap(group => group.items);
+
+  useEffect(() => {
+    const carriageCodes = rateGroups.flatMap(group => group.id === "carriage" ? group.items.map(item => item.code) : []);
+    if (!carriageCodes.length) return;
+    setMarketRates((previous: Record<string, number>) => {
+      let changed = false;
+      const next = { ...previous };
+      for (const code of carriageCodes) {
+        if (Number(next[code]) !== 0) {
+          next[code] = 0;
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
+    setDraftRates(previous => {
+      let changed = false;
+      const next = { ...previous };
+      for (const code of carriageCodes) {
+        if (next[code] !== "0") {
+          next[code] = "0";
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
+  }, [rateGroups, setMarketRates]);
 
   return (
     <div ref={findContainerRef} className={`flex-1 min-h-0 flex flex-col p-6 ${dark ? "bg-[#0b1121] text-slate-100" : "bg-slate-50 text-slate-900"}`}>
@@ -300,10 +395,12 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
           </label>
           <button onClick={applyCLC} disabled={loading} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded text-sm font-bold shadow">Apply CLC Rates</button>
         </div>
-        <div className="flex items-center">
-          <button onClick={saveProjectRates} disabled={savingRates || loading || !projectId || !editableRateCodeSet.size} className="rounded bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50" title={`Save market rates to project ${projectId || "(no active project)"}`}>
+        <div className="flex items-center gap-2">
+          <button onClick={saveProjectRates} disabled={savingRates || loading || !projectId || (!editableRateCodeSet.size && !rateGroups.some(group => group.id === "carriage"))} className="rounded bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50" title={`Save market rates to project ${projectId || "(no active project)"}`}>
             {savingRates ? "Saving…" : "Save Rates"}
           </button>
+          <button type="button" onClick={() => void exportExcel()} disabled={loading || !estimateRows.length} className="rounded bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">Export to Excel</button>
+          <button type="button" onClick={() => void exportPdf()} disabled={loading || !estimateRows.length} className="rounded bg-rose-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50">Export to PDF</button>
         </div>
       </div>
 
@@ -316,14 +413,15 @@ export default function RateList({ theme = "dark", marketRates, setMarketRates, 
             </tr></thead>
             <tbody>
               {visibleGroups.map(group => <React.Fragment key={group.id}>
-                <tr className={dark ? "bg-slate-900 text-amber-300" : "bg-slate-200 text-amber-800"}><td colSpan={6} className="sticky left-0 border-y border-slate-700 px-4 py-2 text-sm font-bold">{group.title}</td></tr>
+                <tr className={dark ? "bg-slate-900 text-amber-300" : "bg-slate-200 text-amber-800"}><td colSpan={6} className="sticky left-0 border-y border-slate-700 px-4 py-2 text-base font-bold">{group.title}</td></tr>
                 {group.items.length ? group.items.map(item => {
-                  const defaultRate = item.carriage ? 0 : item.dsrRate;
-                  const marketRate = marketRates[item.code] !== undefined ? marketRates[item.code] : defaultRate;
-                  const isSelected = editableRateCodeSet.has(item.code);
+                  const defaultRate = item.dsrRate;
+                  const savedMarketRate = lookupCodeValue(marketRates, item.code);
+                  const marketRate = savedMarketRate !== undefined ? savedMarketRate : item.carriage ? 0 : defaultRate;
+                  const isSelected = editableRateCodeSet.has(normalizeBasicCode(item.code));
                   return <tr data-find-row key={item.code} className={`${dark ? "border-b border-slate-800 hover:bg-slate-800/70" : "border-b border-slate-200 hover:bg-slate-100"} ${isSelected ? "" : "bg-slate-950/30 opacity-50 grayscale"}`}>
                     <td className="p-3 text-center font-bold">{item.sl}</td><td className="p-3 font-mono font-bold text-blue-400">{item.code}</td><td className="p-3 leading-relaxed">{item.description}</td><td className="p-3 text-center text-slate-400">{item.unit}</td><td className="p-3 text-right font-mono font-bold">{item.dsrRate.toFixed(2)}</td>
-                    <td className="p-2"><input type="text" inputMode="decimal" value={draftRates[item.code] ?? String(marketRate)} onChange={event => handleRateChange(item.code, event.target.value, defaultRate)} disabled={!isSelected} aria-label={`Market rate for ${item.code}`} className={`w-full border rounded px-3 py-2 text-right font-mono font-bold outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500 ${inputClass}`} /></td>
+                    <td className="p-2"><input type="text" inputMode="decimal" value={draftRates[item.code] ?? String(marketRate)} onChange={event => handleRateChange(item.code, event.target.value, defaultRate)} disabled={!isSelected && !item.carriage} aria-label={`Market rate for ${item.code}`} title={item.carriage ? "Carriage rates start at zero and can be edited." : undefined} className={`w-full border rounded px-3 py-2 text-right font-mono font-bold outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500 ${inputClass}`} /></td>
                   </tr>;
                 }) : <tr><td colSpan={6} className="p-5 text-center text-slate-500 italic">No analysed items in this group.</td></tr>}
               </React.Fragment>)}

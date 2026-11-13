@@ -50,25 +50,28 @@ export default function ProjectSettings({ projectDetails, setProjectDetails, set
   };
 
   const isCustomEpfEsi = projectDetails.typeOfWork === "Custom Options";
+  const isDark = theme === "dark";
+  const labelClass = isDark ? "text-slate-200" : "text-slate-700";
+  const fieldClass = `border rounded px-3 py-2 outline-none font-semibold transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${isDark ? "border-slate-600 bg-slate-950 text-slate-100 placeholder:text-slate-500" : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400"}`;
 
   return (
     <div className="w-full flex justify-center py-10 font-sans text-sm">
-      <div className="bg-white text-slate-800 border border-slate-300 rounded-xl shadow-2xl p-8 w-[950px]">
+      <div data-theme-panel="project-settings" className={`mx-4 w-full max-w-6xl rounded-xl border p-8 shadow-2xl ${isDark ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-300 bg-olive-card text-slate-800"}`}>
 
-        <h2 className="text-2xl font-bold text-blue-600 mb-6 uppercase tracking-wide border-b border-slate-200 pb-2">Project Details & Settings</h2>
+        <h2 className={`mb-6 border-b pb-2 text-2xl font-bold uppercase tracking-wide ${isDark ? "border-slate-700 text-blue-300" : "border-slate-200 text-blue-600"}`}>Project Details & Settings</h2>
 
         <div className="grid grid-cols-3 gap-6 mb-6">
           <div className="flex flex-col">
-            <label className="font-bold text-slate-700 text-xs mb-1 uppercase">ESTIMATE ID</label>
-            <input type="text" value={projectDetails.estimateId} onChange={(e) => handleUpdate('estimateId', e.target.value)} className="border border-slate-300 rounded px-3 py-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all font-semibold" />
+            <label className={`mb-1 text-xs font-bold uppercase ${labelClass}`}>ESTIMATE ID</label>
+            <input type="text" value={projectDetails.estimateId} onChange={(e) => handleUpdate('estimateId', e.target.value)} className={fieldClass} />
           </div>
           <div className="flex flex-col">
-            <label className="font-bold text-slate-700 text-xs mb-1 uppercase">DSR VERSION</label>
-            <input type="text" value={projectDetails.dsrVersion} onChange={(e) => handleUpdate('dsrVersion', e.target.value)} className="border border-slate-300 rounded px-3 py-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all font-semibold" />
+            <label className={`mb-1 text-xs font-bold uppercase ${labelClass}`}>DSR VERSION</label>
+            <input type="text" value={projectDetails.dsrVersion} onChange={(e) => handleUpdate('dsrVersion', e.target.value)} className={fieldClass} />
           </div>
           <div className="flex flex-col">
-            <label className="font-bold text-slate-700 text-xs mb-1 uppercase">CURRENCY ROUND-OFF FORMAT</label>
-            <select value={projectDetails.currencyFormat} onChange={(e) => handleUpdate('currencyFormat', e.target.value)} className="border border-slate-300 rounded px-3 py-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all font-semibold">
+            <label className={`mb-1 text-xs font-bold uppercase ${labelClass}`}>CURRENCY ROUND-OFF FORMAT</label>
+            <select value={projectDetails.currencyFormat} onChange={(e) => handleUpdate('currencyFormat', e.target.value)} className={fieldClass}>
               <option>Indian (Lakhs/Crores)</option>
               <option>Standard (Millions)</option>
               <option>Exact Value</option>
@@ -77,17 +80,17 @@ export default function ProjectSettings({ projectDetails, setProjectDetails, set
         </div>
 
         <div className="flex flex-col mb-6">
-          <label className="font-bold text-slate-700 text-xs mb-1 uppercase">NAME OF WORK</label>
+          <label className={`mb-1 text-xs font-bold uppercase ${labelClass}`}>NAME OF WORK</label>
           <textarea 
             placeholder="Enter comprehensive description of the work..." 
             value={projectDetails.nameOfWork} 
             onChange={(e) => handleUpdate('nameOfWork', e.target.value)} 
-            className="border border-slate-300 rounded px-3 py-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all h-24 font-semibold resize-none"
+            className={`${fieldClass} h-24 resize-none`}
           />
         </div>
 
-        <section className="mb-8 rounded-lg border border-slate-200 bg-white p-5">
-          <h3 className="mb-4 border-b border-slate-200 pb-2 font-bold uppercase tracking-widest text-slate-800">
+        <section className={`mb-8 rounded-lg border p-5 ${isDark ? "border-slate-700 bg-slate-800/70" : "border-slate-200 bg-white"}`}>
+          <h3 className={`mb-4 border-b pb-2 font-bold uppercase tracking-widest ${isDark ? "border-slate-700 text-slate-100" : "border-slate-200 text-slate-800"}`}>
             Document Header &amp; Signatories
           </h3>
           <div className="mb-5 flex gap-2 border-b border-slate-200">

@@ -1,6 +1,14 @@
 import { buildHierarchicalRows } from "../utils/dsrHierarchy";
 import React, { useState, useEffect, useRef } from "react";
-import { exportMeasurementSheetToExcel } from "../utils/exportTableToExcel";
+import { buildMeasurementSheetLayout, exportEstimateWorksheetToPdf, exportMeasurementSheetToExcel } from "../utils/exportTableToExcel";
+
+const firstNonEmptyText = (...values: unknown[]) => {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+};
 
 const HighlightText = ({ text, query, highlightClass }: { text: string, query: string, highlightClass: string }) => {
   if (!query || typeof text !== 'string') return <>{text}</>;
@@ -320,7 +328,12 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
     Object.entries(items).map(([itemCode, rows]) => ({
       ...(rows[0] || {}),
       itemCode,
-      description: rates.find((rate: any) => String(rate.code) === itemCode)?.description ?? rows[0]?.description ?? "",
+      description: firstNonEmptyText(
+        rows[0]?.userDescription,
+        rates.find((rate: any) => String(rate.code) === itemCode)?.description,
+        rates.find((rate: any) => String(rate.code) === itemCode)?.item_description,
+        rows[0]?.description,
+      ),
     })),
   );
   const hierarchyRows = buildHierarchicalRows(hierarchyInput, rates);
@@ -372,7 +385,7 @@ export default function MeasurementSheet({ estimateRows, setEstimateRows, rates,
             <button onClick={() => setSearchQuery(searchInput)} className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-white font-bold text-sm border-l border-slate-700">Search</button>
           </div>
           <button type="button" onClick={() => void exportMeasurementSheetToExcel(exportRootRef.current, String(projectDetails?.nameOfWork || ""), "Measurement_Sheet", [...rates, ...estimateRows], { projectDetails }, String(projectDetails?.estimateId || "N/A"), { estimateRows, rates, marketRates: {}, projectDetails: projectDetails || {} })} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 ml-2 text-sm">📊 Meas. Excel</button>
-          <button className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 Meas. PDF</button>
+          <button type="button" onClick={() => exportEstimateWorksheetToPdf("Measurement Sheet", String(projectDetails?.estimateId || "N/A"), worksheet => buildMeasurementSheetLayout(worksheet, { estimateRows, rates, marketRates: {}, projectDetails: projectDetails || {} }, String(projectDetails?.estimateId || "N/A")))} className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 Meas. PDF</button>
         </div>
       </div>
 

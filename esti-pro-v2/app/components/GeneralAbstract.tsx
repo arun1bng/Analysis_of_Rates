@@ -1,5 +1,6 @@
 import React, { useRef } from "react";
-import { exportGenAbstToExcel } from "../utils/exportTableToExcel";
+import { buildGenAbstSheetLayout, exportEstimateWorksheetToPdf, exportGenAbstToExcel } from "../utils/exportTableToExcel";
+import { calculateAbstractTotals, resolveEstimateRate } from "../utils/abstractTotals";
 
 const formatAmt = (val: number, formatStr: string) => {
   const num = Math.round(val);
@@ -36,33 +37,29 @@ export default function GeneralAbstract({ estimateRows = [], rates = [], project
 
   const groupedTotals: Record<string, number> = {};
   const isNSR = (code: string) => code?.startsWith("NSR") || code?.startsWith("51.");
-
+  const itemGroups = new Map<string, any>();
   estimateRows.forEach((row: any) => {
+    const code = String(row.itemCode ?? "").trim();
+    if (!code) return;
+    const group = itemGroups.get(code);
+    if (group) group.quantity += Number(row.quantity) || 0;
+    else itemGroups.set(code, { ...row, itemCode: code, quantity: Number(row.quantity) || 0 });
+  });
+  itemGroups.forEach((row: any) => {
     const shTitle = getSHName(row.itemCode);
-    const mRate = marketRates && marketRates[row.itemCode] !== undefined ? Number(marketRates[row.itemCode]) : (Number(row.rate) || 0);
-    const amt = mRate * (Number(row.quantity) || 1);
-    
+    const mRate = isNSR(row.itemCode) && marketRates?.[row.itemCode] !== undefined
+      ? Number(marketRates[row.itemCode])
+      : resolveEstimateRate(row, rates);
+    const amt = Math.round((Number.isFinite(mRate) ? mRate : resolveEstimateRate(row, rates)) * (Number(row.quantity) || 1));
     if (!groupedTotals[shTitle]) groupedTotals[shTitle] = 0;
     groupedTotals[shTitle] += amt;
   });
 
   const sortedSHNames = Object.keys(groupedTotals).sort((a, b) => extractSHNum(a) - extractSHNum(b));
 
-  const totalDSR = Math.round(estimateRows.filter((r: any) => !isNSR(r.itemCode)).reduce((sum: number, row: any) => sum + (Number(row.rate) || 0) * (Number(row.quantity) || 1), 0));
-  
-  const ciRate = Number(projectDetails.costIndex) || 0;
-  const ciAmount = Math.round(totalDSR * (ciRate / 100));
-  const subtotalDSR_CI = totalDSR + ciAmount;
-
+  const { totalDSR, ciRate, ciAmount, subtotalDSR_CI, modifiedDSR, nsrTotal, baseCombined } =
+    calculateAbstractTotals(estimateRows, projectDetails, marketRates, rates);
   const modFactor = Number(projectDetails.gstModificationFactor) || 1;
-  const modifiedDSR = Math.round(subtotalDSR_CI * modFactor);
-
-  const nsrTotal = Math.round(estimateRows.filter((r: any) => isNSR(r.itemCode)).reduce((sum: number, row: any) => {
-       const mRate = marketRates && marketRates[row.itemCode] !== undefined ? Number(marketRates[row.itemCode]) : (Number(row.rate) || 0);
-       return sum + (mRate * (Number(row.quantity) || 1));
-    }, 0));
-
-  const baseCombined = modifiedDSR + nsrTotal;
 
   const epfRate = (Number(projectDetails.epf) || 0) / 100;
   const esiRate = (Number(projectDetails.esi) || 0) / 100;
@@ -111,7 +108,7 @@ export default function GeneralAbstract({ estimateRows = [], rates = [], project
         </div>
         <div className="flex gap-2">
           <button type="button" onClick={() => void exportGenAbstToExcel(exportRootRef.current, String(projectDetails?.nameOfWork || ""), "General_Abstract", projectDetails || {}, String(projectDetails?.estimateId || "N/A"), { estimateRows, rates, marketRates, projectDetails: projectDetails || {} })} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📊 Excel</button>
-          <button className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 PDF</button>
+          <button type="button" onClick={() => exportEstimateWorksheetToPdf("General Abstract", String(projectDetails?.estimateId || "N/A"), worksheet => buildGenAbstSheetLayout(worksheet, { estimateRows, rates, marketRates, projectDetails: projectDetails || {} }, String(projectDetails?.estimateId || "N/A")))} className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow flex items-center gap-1 text-sm">📄 PDF</button>
         </div>
       </div>
 

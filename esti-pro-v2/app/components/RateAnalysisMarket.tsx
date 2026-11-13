@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { getSerialNumbers } from "./RateAnalysisDSR";
 import { usePageTools } from "./PageToolsContext";
-import { exportTableToExcel } from "../utils/exportTableToExcel";
+import { exportRateAnalysisWorkbook } from "../utils/exportJustfnToExcel";
+import { openEstimatePdfWindow } from "../utils/exportTableToExcel";
 
 const CUSTOM_CHARGES_STORAGE_KEY = "esti-pro-nsr-custom-charges-v1";
 const DEFAULT_CHARGES = [
@@ -13,7 +14,26 @@ const DEFAULT_CHARGES = [
 const isNonScheduleItem = (value: unknown) => /^(?:NSR|51(?:\.|$))/i.test(String(value || "").trim());
 const isNSItem = (code: string) => isNonScheduleItem(code);
 const singleLetterMark = (value: unknown) => /^[A-Z]$/i.test(String(value ?? "").trim()) ? String(value).trim().toUpperCase() : "";
-const normalizedCode = (value: unknown) => String(value ?? "").trim().replace(/\*+$/, "").trim();
+const normalizedCode = (value: unknown) => {
+  const code = String(value ?? "").trim().replace(/\*+$/, "").trim();
+  return /^\d+$/.test(code) ? String(Number(code)) : code;
+};
+const analysisComponentCode = (row: any) => String(
+  row?.sub_analysis_code ?? row?.subAnalysisCode ?? row?.component_code ?? row?.code ?? "",
+).trim();
+const getConventionalGstMultiplier = (rows: any[], fallback?: number): number | undefined => {
+  for (const row of rows || []) {
+    const description = String(row?.description || "");
+    if (!/\bGST\b/i.test(description)) continue;
+    const factor = description.match(/multiplying\s+factor\s*[:=]?\s*(\d+(?:\.\d+)?)/i);
+    if (factor) return Number(factor[1]);
+    const percentage = description.match(/@\s*(\d+(?:\.\d+)?)\s*%/);
+    if (percentage) return Number(percentage[1]) / 100;
+    const direct = Number(row?.gstMultiplier ?? row?.gst_multiplier ?? row?.gstFactor ?? row?.gst_factor);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+  }
+  return Number.isFinite(fallback) && Number(fallback) > 0 ? Number(fallback) : undefined;
+};
 const codeFamily = (value: unknown) => Number(/^([0-9]+)/.exec(String(value || "").trim())?.[1] || Number.MAX_SAFE_INTEGER);
 const DSR_SUBHEAD_NAMES: Record<string, string> = {
   "1": "Carriage of materials", "2": "Earth work", "3": "Mortars", "4": "Concrete work",
@@ -32,9 +52,14 @@ function getDSRReferenceDescription(codeValue: unknown, ratesByCode: Map<string,
   const familyNumber = Number(family);
   if (familyNumber < 1 || familyNumber > 26) return null;
 
-  const subhead = ratesByCode.get(family)
-    ?? rates.find(rate => normalizedCode(rate.code) === family);
-  const rawName = String(subhead?.description ?? subhead?.item_description ?? "").trim();
+  const exactSubhead = rates.find(rate => String(rate.code ?? "").trim() === family);
+  const indexedSubhead = ratesByCode.get(family);
+  const candidateDescription = String((exactSubhead ?? indexedSubhead)?.description ?? (exactSubhead ?? indexedSubhead)?.item_description ?? "").trim();
+  // A normalized key like "3" can belong to Basic Rate 0003 (diesel roller).
+  // Only accept a subhead-looking label; otherwise use the authoritative SH map.
+  const rawName = /^(?:SH\s*\d+\s*[:.-]?|\d+\s*[:.-])\s*/i.test(candidateDescription)
+    ? candidateDescription
+    : "";
   const cleanedName = rawName
     .replace(/^SH\s*\d*\s*[:.-]?\s*/i, "")
     .replace(new RegExp(`^${family}\\s*[:.-]?\\s*`), "")
@@ -87,7 +112,7 @@ function getAnalysisBaseQuantity(rows: any[]) {
   return baseQuantity;
 }
 
-function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA: boolean, unit = "unit", exemptOverheads = false, baseQty = getAnalysisBaseQuantity(rows)) {
+function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA: boolean, unit = "unit", exemptOverheads = false, baseQty = getAnalysisBaseQuantity(rows), gstMultiplierFallback?: number) {
   const details = rows
     .filter(row => String(row.row_type || "").toUpperCase() !== "CALC_SNAPSHOT")
     .map(row => {
@@ -145,7 +170,16 @@ function calculateAnalysis(rows: any[], method: string, charges: any[], excludeA
     add('TOTAL "W"', w, "W");
     const water = base(w) * 0.01; add(`Add 1% Water charges on "W${suffix}"`, water); x = w + water; total = x;
     add('TOTAL "X"', x, "X");
-    const gst = base(x) * 0.2127; add(`Add GST on "X${suffix}" (multiplying factor 0.2127)`, gst); y = x + gst; total = y;
+    const gstMultiplier = getConventionalGstMultiplier(rows, gstMultiplierFallback);
+    if (gstMultiplier !== undefined) {
+      const gst = base(x) * gstMultiplier;
+      add(`Add GST on "X${suffix}" (multiplying factor ${gstMultiplier})`, gst);
+      y = x + gst;
+      total = y;
+    } else {
+      y = x;
+      total = y;
+    }
     add('TOTAL "Y"', y, "Y");
     const cpoh = base(y) * 0.15; add(`Add 15% CPOH on "Y${suffix}"`, cpoh); z = y + cpoh; total = z;
     add('TOTAL "Z"', z, "Z");
@@ -190,6 +224,7 @@ export default function RateAnalysisMarket({
   rates = [],
   theme = "dark",
   projectId = "",
+  projectDetails = {},
   customItems = [],
   analysisSnapshot = {},
   setJustifiedRates,
@@ -204,20 +239,10 @@ export default function RateAnalysisMarket({
   const findContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => registerPageTools("ramarket", {
     searchContainerRef: findContainerRef,
-    exportActions: [{
-      id: "export-market-pdf",
-      label: "📄 Export Market PDF",
-      onClick: () => window.print(),
-      className: "bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded font-bold shadow",
-    }, {
-      id: "export-market-excel",
-      label: "📊 Export Market Excel",
-      onClick: () => exportTableToExcel(findContainerRef.current, "Rate Analysis (Market)", "Rate_Analysis_Market"),
-      className: "bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded font-bold shadow",
-    }],
   }), [registerPageTools]);
   const [analyses, setAnalyses] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
+  const [activeAnalysisSheet, setActiveAnalysisSheet] = useState("dsr-mdsr");
   const [internalMethod, setInternalMethod] = useState("Conventional DSR");
   const [charges, setCharges] = useState<any[]>(DEFAULT_CHARGES);
   const [chargesDraft, setChargesDraft] = useState<any[]>(DEFAULT_CHARGES);
@@ -226,6 +251,10 @@ export default function RateAnalysisMarket({
   const [customModalOpen, setCustomModalOpen] = useState(false);
   const [previousMethod, setPreviousMethod] = useState("Conventional DSR");
   const method = calculationMethod ?? internalMethod;
+  const conventionalGstMultiplier = useMemo(
+    () => getConventionalGstMultiplier(Object.values(analyses).flat()),
+    [analyses],
+  );
   const updateMethod = (nextMethod: string) => {
     if (setCalculationMethod) setCalculationMethod(nextMethod);
     else setInternalMethod(nextMethod);
@@ -233,7 +262,36 @@ export default function RateAnalysisMarket({
   };
 
   const customByCode = useMemo(() => new Map(customItems.map((item: any) => [String(item.code), item])), [customItems]);
-  const basicRatesByCode = useMemo(() => new Map((rates as any[]).map(item => [normalizedCode(item.code), item])), [rates]);
+  const basicRatesByCode = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const item of rates as any[]) {
+      const key = normalizedCode(item.code);
+      if (!map.has(key)) map.set(key, item);
+    }
+    return map;
+  }, [rates]);
+  const findRateItemByCode = (code: string) => (rates as any[]).find(item => String(item.code ?? "").trim() === String(code).trim())
+    ?? basicRatesByCode.get(normalizedCode(code));
+  const marketRateFor = (code: string): number | undefined => {
+    const normalized = normalizedCode(code);
+    const candidates = [
+      Object.prototype.hasOwnProperty.call(marketRates, code) ? marketRates[code] : undefined,
+      ...Object.entries(marketRates as Record<string, unknown>)
+        .filter(([key]) => normalizedCode(key) === normalized)
+        .map(([, value]) => value),
+    ];
+    for (const candidate of candidates) {
+      if (candidate === undefined || candidate === null || String(candidate).trim() === "") continue;
+      const value = Number(candidate);
+      if (Number.isFinite(value)) return value;
+    }
+
+    // An absent/blank market override means “use the DSR basic rate”. An
+    // explicit zero remains an intentional user-entered override.
+    const basicRateItem = findRateItemByCode(code);
+    const basicRate = Number(basicRateItem?.rate ?? basicRateItem?.dsrRate ?? basicRateItem?.dsr_rate);
+    return Number.isFinite(basicRate) ? basicRate : undefined;
+  };
   const serialNumbers = useMemo(() => getSerialNumbers(estimateRows || [], rates || []), [estimateRows, rates]);
   const uniqueItems = useMemo(() => {
     const uniqueByCode = new Map<string, any>();
@@ -255,7 +313,7 @@ export default function RateAnalysisMarket({
     const selectedCodeSet = new Set((selectedCodes as string[]).map(code => String(code).trim()));
     const selectedItems = uniqueItems.filter((item: any) => selectedCodeSet.has(String(item.itemCode || "").trim()));
     const unselectedItems = uniqueItems.filter((item: any) => !selectedCodeSet.has(String(item.itemCode || "").trim()));
-    const findRateItem = (code: string) => (rates as any[]).find(rate => normalizedCode(rate.code) === normalizedCode(code)) || { code, description: "", unit: "" };
+    const findRateItem = (code: string) => findRateItemByCode(code) || { code, description: "", unit: "" };
     const buildGroupCards = (items: any[]) => {
       const sortCodes = (left: any, right: any) => compareItemCodes(String(left.itemCode), String(right.itemCode));
       const dsrItems = items.filter(item => codeFamily(item.itemCode) >= 1 && codeFamily(item.itemCode) <= 26).sort(sortCodes);
@@ -276,7 +334,7 @@ export default function RateAnalysisMarket({
         for (const row of analyses[parent.code] || []) {
           const type = String(row.row_type || "").toUpperCase();
           if (type === "NCR" || type === "SCR") continue;
-          const child = String(row.component_code || row.code || "").trim();
+          const child = analysisComponentCode(row);
           const explicit = row.is_sub_ar === true || row.is_sub_ar === 1 || row.is_sub_ar === "1" || String(row.isSubAR || "").toLowerCase() === "true";
           if (!/^\d+(?:\.\d+)+$/.test(child)) continue;
           if (!mainItemCodes.has(child)) {
@@ -298,18 +356,24 @@ export default function RateAnalysisMarket({
       const subEntries = (codes: Set<string>, keepMarketRates: boolean) => [...codes]
         .sort(compareItemCodes)
         .map(code => ({ item: findRateItem(code), code, isSubAnalysis: true, keepMarketRates }));
-      return [
-        { heading: "DSR Items (SH 1–26)" },
-        ...itemEntries(dsrItems, true),
-        { heading: "DR Items" },
-        ...itemEntries(drItems, true),
-        { heading: "Sub ARs" },
-        ...subEntries(beforeNS, true),
-        { heading: "NS Items" },
-        ...itemEntries(nsItems, false),
-        { heading: "NS Sub ARs" },
-        ...subEntries(nsSubAnalyses, false),
-      ];
+      return {
+        dsrMdsr: [
+          { heading: "DSR and mDSR Items" },
+          ...itemEntries([...dsrItems, ...drItems], true),
+        ],
+        subDsr: [
+          { heading: "Sub ARs (DSR and mDSR)" },
+          ...subEntries(beforeNS, true),
+        ],
+        ns: [
+          { heading: "NS Items" },
+          ...itemEntries(nsItems, false),
+        ],
+        subNs: [
+          { heading: "Sub ARs (NS)" },
+          ...subEntries(nsSubAnalyses, false),
+        ],
+      };
     };
     return {
       selected: buildGroupCards(selectedItems),
@@ -318,6 +382,14 @@ export default function RateAnalysisMarket({
       hasUnselected: unselectedItems.length > 0,
     };
   }, [uniqueItems, selectedCodes, analyses, rates, mainItemCodes]);
+
+  const analysisSheets = [
+    { id: "dsr-mdsr", label: "RA of DSR & mDSR", key: "dsrMdsr" },
+    { id: "sub-dsr-mdsr", label: "Sub ARs of DSR & mDSR", key: "subDsr" },
+    { id: "ns", label: "RA of NS Items", key: "ns" },
+    { id: "sub-ns", label: "Sub ARs of NS Items", key: "subNs" },
+  ] as const;
+  const activeSheet = analysisSheets.find(sheet => sheet.id === activeAnalysisSheet) || analysisSheets[0];
 
   useEffect(() => {
     const methodKey = `esti-pro-market-method-${String(projectId || "default")}`;
@@ -359,7 +431,7 @@ export default function RateAnalysisMarket({
           for (const row of newAnalyses[code] || []) {
             const isExplicitSub = row.is_sub_ar === true || row.is_sub_ar === 1 || row.is_sub_ar === "1" || String(row.is_sub_ar ?? row.isSubAR ?? "").toLowerCase() === "true";
             if (String(row.row_type || "").toUpperCase() === "NCR" || String(row.row_type || "").toUpperCase() === "SCR") continue;
-            const childCode = String(row.component_code || row.code || "").trim();
+            const childCode = analysisComponentCode(row);
             if ((isExplicitSub || /^\d+(?:\.\d+)+$/.test(childCode)) && /^\d+(?:\.\d+)+$/.test(childCode) && !visited.has(childCode)) queue.push(childCode);
           }
         }
@@ -384,6 +456,17 @@ export default function RateAnalysisMarket({
     updateMethod(next);
   };
 
+  const appliedPeriod = String(projectDetails?.clcPeriodLabel || (() => {
+    const match = String(projectDetails?.clcPeriod || "").match(/^(\d{4})-(\d{2})$/);
+    if (!match) return "Not recorded";
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    if (month === 4) return `April ${year} to September ${year}`;
+    if (month === 10) return `October ${year} to March ${year + 1}`;
+    return String(projectDetails.clcPeriod);
+  })()).replace(/^w\.e\.f\.\s*/i, "");
+  const appliedArea = String(projectDetails?.clcArea || "Not recorded");
+
   const saveCustomCharges = () => {
     const clean = chargesDraft.map((charge, index) => ({ id: String(charge.id || `charge-${index}`), name: String(charge.name || `Charge ${index + 1}`).trim(), rate: String(Math.max(0, Number(charge.rate) || 0)) }));
     try { localStorage.setItem(CUSTOM_CHARGES_STORAGE_KEY, JSON.stringify({ charges: clean, excludeAMarkedItems: excludeADraft })); }
@@ -394,21 +477,21 @@ export default function RateAnalysisMarket({
   };
 
   const resolveScheduleRate = (code: string, ancestors = new Set<string>()): number | null => {
-    if (!code || ancestors.has(code) || isNSItem(code)) return marketRates[code] === undefined ? null : Number(marketRates[code]);
+    const directRate = marketRateFor(code);
+    if (!code || ancestors.has(code) || isNSItem(code)) return directRate === undefined ? null : directRate;
     const sourceRows = analyses[code] || [];
-    if (!sourceRows.length) return marketRates[code] === undefined ? null : Number(marketRates[code]);
+    if (!sourceRows.length) return directRate === undefined ? null : directRate;
     const nextAncestors = new Set(ancestors).add(code);
     const adjusted = sourceRows.filter((row: any) => !isExistingFinancialRow(row)).map((row: any) => {
       if (String(row.row_type || "").toUpperCase() !== "CR") return row;
-      const childCode = String(row.component_code || row.code || "").trim();
+      const childCode = analysisComponentCode(row);
       const nested = /^\d+(?:\.\d+)+$/.test(childCode) ? resolveScheduleRate(childCode, nextAncestors) : null;
-      const rate = nested ?? (marketRates[childCode] === undefined ? null : Number(marketRates[childCode]));
-      if (rate === null) return row;
+      const rate = nested ?? marketRateFor(childCode) ?? 0;
       const quantity = Number(row.quantity);
       return { ...row, rate, amount: row.quantity !== "" && row.quantity != null && Number.isFinite(quantity) ? quantity * rate : row.amount };
     });
-    const result = calculateAnalysis(adjusted, method, charges, excludeA, basicRatesByCode.get(normalizedCode(code))?.unit || "unit", codeFamily(code) === 3, getAnalysisBaseQuantity(sourceRows));
-    return result.total > 0 ? result.total : null;
+    const result = calculateAnalysis(adjusted, method, charges, excludeA, findRateItemByCode(code)?.unit || "unit", codeFamily(code) === 3, getAnalysisBaseQuantity(sourceRows), getConventionalGstMultiplier(sourceRows, conventionalGstMultiplier));
+    return result.total;
   };
 
   const localFinalRates = useMemo(() => {
@@ -416,7 +499,7 @@ export default function RateAnalysisMarket({
     for (const item of uniqueItems) {
       const code = String(item.itemCode || "").trim();
       if (!code) continue;
-      const itemData: any = customByCode.get(code) ?? basicRatesByCode.get(normalizedCode(code));
+      const itemData: any = customByCode.get(code) ?? findRateItemByCode(code);
       const sourceRows = analyses[code] || [];
       if (isNSItem(code)) {
         computed[code] = Number(item.rate) || 0;
@@ -427,19 +510,18 @@ export default function RateAnalysisMarket({
         continue;
       }
       const adjustedRows = sourceRows.filter((row: any) => !isExistingFinancialRow(row)).map((row: any) => {
-        const componentCode = String(row.component_code || row.code || "").trim();
+        const componentCode = analysisComponentCode(row);
         if (String(row.row_type || "").toUpperCase() !== "CR" || !componentCode) return row;
         const nestedRate = /^\d+(?:\.\d+)+$/.test(componentCode) ? resolveScheduleRate(componentCode, new Set([code])) : null;
-        const rate = nestedRate ?? (marketRates[componentCode] === undefined ? null : Number(marketRates[componentCode]));
-        if (rate === null) return row;
+        const rate = nestedRate ?? marketRateFor(componentCode) ?? 0;
         const quantity = Number(row.quantity);
         return { ...row, rate, amount: row.quantity !== "" && row.quantity != null && Number.isFinite(quantity) ? quantity * rate : row.amount };
       });
-      const result = calculateAnalysis(adjustedRows, method, charges, excludeA, itemData?.unit || item.unit || "unit", codeFamily(code) === 3, getAnalysisBaseQuantity(sourceRows));
-      computed[code] = sourceRows.length ? result.finalSayRate : Number(item.rate) || 0;
+      const result = calculateAnalysis(adjustedRows, method, charges, excludeA, itemData?.unit || item.unit || "unit", codeFamily(code) === 3, getAnalysisBaseQuantity(sourceRows), getConventionalGstMultiplier(sourceRows, conventionalGstMultiplier));
+      computed[code] = sourceRows.length ? result.finalSayRate : marketRateFor(code) ?? 0;
     }
     return computed;
-  }, [uniqueItems, analyses, customByCode, basicRatesByCode, marketRates, method, charges, excludeA]);
+  }, [uniqueItems, analyses, customByCode, basicRatesByCode, marketRates, method, charges, excludeA, conventionalGstMultiplier]);
 
   const prevRatesRef = useRef("");
   useEffect(() => {
@@ -460,11 +542,73 @@ export default function RateAnalysisMarket({
   }, [focusCode, isActive, loading, analyses, onFocusHandled]);
 
   return (
-    <div ref={findContainerRef} className="w-full h-full flex flex-col overflow-y-auto p-6 bg-[#0b0f19] text-slate-100 font-sans text-base">
-      <div className="flex justify-between items-center mb-6 pb-2 border-b border-slate-800">
-        <h2 className="text-base font-bold text-amber-500 uppercase tracking-widest">Rate Analysis (Market)</h2>
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <label className="flex items-center gap-2 text-sm font-semibold text-slate-300">Calculation method<select value={method} onChange={event => selectMethod(event.target.value)} className="rounded border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"><option>Conventional DSR</option><option>Modified DSR</option><option>Custom charges</option></select></label>
+    <div ref={findContainerRef} className="w-full h-full flex flex-col overflow-y-auto p-6 bg-olive-light text-slate-800 dark:bg-[#0b0f19] dark:text-slate-100 font-sans text-base">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+          <h2 className="text-base font-bold text-amber-500 uppercase tracking-widest">Rate Analysis (Market)</h2>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs leading-5 text-slate-300 sm:text-sm">
+            <span><span className="font-semibold text-slate-100">Applied labour period:</span> {appliedPeriod}</span>
+            <span><span className="font-semibold text-slate-100">City area:</span> {appliedArea} Area</span>
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          {analysisSheets.map(sheet => <button key={sheet.id} type="button" onClick={() => setActiveAnalysisSheet(sheet.id)} className={`rounded px-4 py-2 text-sm font-bold transition-colors ${activeAnalysisSheet === sheet.id ? "bg-blue-600 text-white" : "border border-slate-700 text-slate-300 hover:bg-slate-800"}`}>{sheet.label}</button>)}
+          <button
+            type="button"
+            disabled={loading || uniqueItems.length === 0}
+            onClick={() => void exportRateAnalysisWorkbook({
+              estimateData: { estimateRows, rates, marketRates, projectDetails },
+              statementRows: estimateRows,
+              justifiedRates: {},
+              baseMarketRates: marketRates,
+              rateListMarketRates: marketRates,
+              summaryInputs: { nitNumber: "", lowestContractor: "", contractorTenderedAmount: "" },
+              analysisSnapshot: analyses,
+              calculationMethod: method,
+              customCharges: charges,
+              excludeAMarkedItems: excludeA,
+            }, "market").catch(error => {
+              console.error("Could not export market rate analyses:", error);
+              alert(error instanceof Error ? error.message : "Could not export market rate analyses.");
+            })}
+            className="rounded bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >📊 Export RA Market</button>
+          <button
+            type="button"
+            disabled={loading || uniqueItems.length === 0}
+            onClick={() => {
+              const printWindow = openEstimatePdfWindow();
+              if (!printWindow) { alert("Allow pop-ups to export the PDF."); return; }
+              void exportRateAnalysisWorkbook({
+                estimateData: { estimateRows, rates, marketRates, projectDetails },
+                statementRows: estimateRows,
+                justifiedRates: {},
+                baseMarketRates: marketRates,
+                rateListMarketRates: marketRates,
+                summaryInputs: { nitNumber: "", lowestContractor: "", contractorTenderedAmount: "" },
+                analysisSnapshot: analyses,
+                calculationMethod: method,
+                customCharges: charges,
+                excludeAMarkedItems: excludeA,
+              }, "market", "pdf", printWindow).catch(error => {
+                printWindow.close();
+                console.error("Could not export market rate analyses to PDF:", error);
+                alert(error instanceof Error ? error.message : "Could not export market rate analyses to PDF.");
+              });
+            }}
+            className="rounded bg-rose-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >📄 Export RA Market PDF</button>
+        </div>
+      </div>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
+          <label className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+            <span>Calculation method</span>
+            <select aria-label="Calculation method" value={method} onChange={event => selectMethod(event.target.value)} className="rounded border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100">
+              <option>Conventional DSR</option><option>Modified DSR</option><option>Custom charges</option>
+            </select>
+          </label>
+          {method === "Custom charges" && <button type="button" onClick={() => selectMethod("Custom charges")} className="rounded border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">Configure charges</button>}
         </div>
       </div>
 
@@ -479,28 +623,28 @@ export default function RateAnalysisMarket({
             if (entry.heading) return <h2 key={`heading-${entry.heading}`} className="text-xl font-bold text-blue-300 uppercase tracking-wide">{entry.heading}</h2>;
             const item = entry.item;
             const codeForItem = String(entry.code || "");
-            const itemData: any = customByCode.get(codeForItem) ?? basicRatesByCode.get(normalizedCode(codeForItem));
+            const itemData: any = customByCode.get(codeForItem) ?? findRateItemByCode(codeForItem);
             const isNS = !entry.keepMarketRates;
             const sourceRows = analyses[codeForItem] || [];
             const external = Boolean(itemData?.isExternalAR || Number(itemData?.is_external_ar) === 1);
             const adjustedRows = isNS ? sourceRows : sourceRows.filter((row: any) => !isExistingFinancialRow(row)).map((row: any) => {
-              const componentCode = String(row.component_code || row.code || "").trim();
+              const componentCode = analysisComponentCode(row);
               if (String(row.row_type || "").toUpperCase() !== "CR" || !componentCode) return row;
               const nestedRate = /^\d+(?:\.\d+)+$/.test(componentCode) ? resolveScheduleRate(componentCode, new Set([codeForItem])) : null;
-              const rate = nestedRate ?? Number(marketRates[componentCode]);
-              if (nestedRate === null && marketRates[componentCode] === undefined) return row;
+              const directRate = marketRateFor(componentCode);
+              const rate = nestedRate ?? directRate ?? 0;
               const quantity = Number(row.quantity);
               return { ...row, rate, amount: row.quantity !== "" && row.quantity != null && Number.isFinite(quantity) ? rate * quantity : row.amount };
             });
             const itemUnit = String(itemData?.unit || item.unit || "unit");
-            const result = isNS ? { rows: sourceRows, total: Number(itemData?.rate ?? item.rate ?? 0) } : calculateAnalysis(adjustedRows, method, charges, excludeA, itemUnit, codeFamily(codeForItem) === 3, getAnalysisBaseQuantity(sourceRows));
+            const result = isNS ? { rows: sourceRows, total: Number(itemData?.rate ?? item.rate ?? 0) } : calculateAnalysis(adjustedRows, method, charges, excludeA, itemUnit, codeFamily(codeForItem) === 3, getAnalysisBaseQuantity(sourceRows), getConventionalGstMultiplier(sourceRows, conventionalGstMultiplier));
             const breakdown = external ? [] : result.rows;
             const serialNo = serialNumbers.get(codeForItem) || item.slNo || idx + 1;
             const mainIndex = uniqueItems.findIndex((main: any) => String(main.itemCode) === codeForItem) + 1;
             const headerDescription = itemData?.description ?? item.description ?? "";
             
             return (
-              <div id={`market-rate-${codeForItem.replace(/[^a-zA-Z0-9_-]/g, "-")}`} key={`${entry.isSubAnalysis ? "sub" : "main"}-${idx}-${codeForItem}`} className="border border-slate-800 rounded-xl overflow-hidden bg-[#0b0f19] shadow-xl mb-5 text-base">
+              <div id={`market-rate-${codeForItem.replace(/[^a-zA-Z0-9_-]/g, "-")}`} data-export-title={entry.isSubAnalysis ? `Sub-Analysis [DSR No. ${codeForItem}]` : `Item ${mainIndex} [Sl. No. ${serialNo}] [DSR No. ${codeForItem}]`} data-export-description={String(headerDescription ?? "")} data-export-context={entry.nonScheduleContext ? "ns" : "schedule"} key={`${entry.isSubAnalysis ? "sub" : "main"}-${idx}-${codeForItem}`} className="border border-slate-800 rounded-xl overflow-hidden bg-[#0b0f19] shadow-xl mb-5 text-base">
                 <div data-find-row className="bg-slate-900/60 border-b border-slate-800 p-4">
                   {entry.isSubAnalysis && <div className="mb-2 text-xs font-bold uppercase tracking-wider text-blue-300">Sub-Analysis</div>}
                   <div className="text-lg text-amber-400 font-bold mb-2">{entry.isSubAnalysis ? `Sub-Analysis [DSR No. ${codeForItem}]` : `Item ${mainIndex} [Sl. No. ${serialNo}] [DSR No. ${codeForItem}]`} {external && <span className="ml-2 rounded border border-violet-700 bg-violet-900/50 px-2 py-1 align-middle text-xs font-bold text-violet-200">Ext. RA</span>}</div>
@@ -546,8 +690,8 @@ export default function RateAnalysisMarket({
                             </tr>
                           );
                         } else {
-                          const code = row.component_code || row.code || "";
-                          const basicRate = basicRatesByCode.get(normalizedCode(code));
+                          const code = analysisComponentCode(row);
+                          const basicRate = findRateItemByCode(code);
                           const componentDescription = String(basicRate?.description ?? descText);
                           const componentType = String(row.row_type || "").trim().toUpperCase();
                           const isStandardDSRComponent = componentType === "CR"
@@ -603,15 +747,14 @@ export default function RateAnalysisMarket({
           });
           return (
             <>
-              <h2 className="text-xl font-bold text-blue-300 uppercase tracking-wide">Items selected for justification</h2>
-              {analysisCards.hasSelected
-                ? renderCards(analysisCards.selected)
+              {analysisCards.hasSelected && analysisCards.selected[activeSheet.key].length > 1
+                ? renderCards(analysisCards.selected[activeSheet.key])
                 : <p className="text-slate-500 italic">No items are selected for justification.</p>}
               <details className="rounded-lg border border-slate-700 bg-slate-900/40">
                 <summary className="cursor-pointer px-4 py-3 font-bold text-slate-300">Items not selected for justification</summary>
                 <div className="space-y-5 p-4 text-slate-400 opacity-70">
-                  {analysisCards.hasUnselected
-                    ? renderCards(analysisCards.unselected)
+                  {analysisCards.hasUnselected && analysisCards.unselected[activeSheet.key].length > 1
+                    ? renderCards(analysisCards.unselected[activeSheet.key])
                     : <p className="italic">No unselected items.</p>}
                 </div>
               </details>
@@ -620,7 +763,7 @@ export default function RateAnalysisMarket({
           })()}
         </div>
       )}
-      {customModalOpen && <div className="fixed inset-0 z-[10050] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => { setCustomModalOpen(false); updateMethod(previousMethod); }}><div className="w-full max-w-3xl rounded-xl bg-white text-slate-900 shadow-2xl" onMouseDown={event => event.stopPropagation()}><div className="border-b p-5"><h3 className="text-xl font-bold text-blue-700">Custom charges</h3><p className="text-sm text-slate-600">Set charge percentages and arrange their application order.</p></div><div className="space-y-3 p-5"><label className="flex gap-2 text-sm"><input type="checkbox" checked={excludeADraft} onChange={event => setExcludeADraft(event.target.checked)} />Exclude A-marked amounts from charge bases</label><div className="grid grid-cols-[1fr_120px_112px] gap-2 text-xs font-bold uppercase text-slate-500"><span>Charge name</span><span>Rate (%)</span><span>Order</span></div>{chargesDraft.map((charge, index) => <div key={charge.id} className="grid grid-cols-[1fr_120px_112px] items-center gap-2"><input value={charge.name} onChange={event => setChargesDraft(previous => previous.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} className="rounded border px-3 py-2"/><input type="number" min="0" step="0.01" value={charge.rate} onChange={event => setChargesDraft(previous => previous.map((entry, i) => i === index ? { ...entry, rate: event.target.value } : entry))} className="rounded border px-3 py-2 text-right"/><div className="flex justify-end gap-1"><button type="button" disabled={!index} onClick={() => setChargesDraft(previous => { const copy = [...previous]; [copy[index - 1], copy[index]] = [copy[index], copy[index - 1]]; return copy; })} className="rounded bg-slate-200 px-2 py-1 disabled:opacity-40">↑</button><button type="button" disabled={index === chargesDraft.length - 1} onClick={() => setChargesDraft(previous => { const copy = [...previous]; [copy[index + 1], copy[index]] = [copy[index], copy[index + 1]]; return copy; })} className="rounded bg-slate-200 px-2 py-1 disabled:opacity-40">↓</button><button type="button" onClick={() => setChargesDraft(previous => previous.filter((_, i) => i !== index))} className="rounded bg-rose-100 px-2 py-1 text-rose-700">×</button></div></div>)}<button type="button" onClick={() => setChargesDraft(previous => [...previous, { id: `charge-${Date.now()}`, name: "Custom charge", rate: "0" }])} className="rounded bg-blue-50 px-4 py-2 font-semibold text-blue-700">+ Add a charge</button></div><div className="flex justify-end gap-3 border-t p-4"><button onClick={() => { setCustomModalOpen(false); updateMethod(previousMethod); }} className="rounded bg-slate-200 px-5 py-2 font-bold">Cancel</button><button onClick={saveCustomCharges} disabled={!chargesDraft.length} className="rounded bg-emerald-600 px-5 py-2 font-bold text-white disabled:opacity-50">Save and use</button></div></div></div>}
+      {customModalOpen && <div className="fixed inset-0 z-[10050] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => { setCustomModalOpen(false); updateMethod(previousMethod); }}><div className="w-full max-w-3xl rounded-xl bg-olive-card text-slate-900 shadow-2xl dark:bg-slate-900 dark:text-slate-100" onMouseDown={event => event.stopPropagation()}><div className="border-b border-slate-200 p-5 dark:border-slate-700"><h3 className="text-xl font-bold text-blue-700 dark:text-blue-300">Custom charges</h3><p className="text-sm text-slate-600 dark:text-slate-300">Set charge percentages and arrange their application order.</p></div><div className="space-y-3 p-5"><label className="flex gap-2 text-sm"><input type="checkbox" checked={excludeADraft} onChange={event => setExcludeADraft(event.target.checked)} />Exclude A-marked amounts from charge bases</label><div className="grid grid-cols-[1fr_120px_112px] gap-2 text-xs font-bold uppercase text-slate-500"><span>Charge name</span><span>Rate (%)</span><span>Order</span></div>{chargesDraft.map((charge, index) => <div key={charge.id} className="grid grid-cols-[1fr_120px_112px] items-center gap-2"><input value={charge.name} onChange={event => setChargesDraft(previous => previous.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} className="rounded border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"/><input type="number" min="0" step="0.01" value={charge.rate} onChange={event => setChargesDraft(previous => previous.map((entry, i) => i === index ? { ...entry, rate: event.target.value } : entry))} className="rounded border border-slate-300 bg-white px-3 py-2 text-right text-slate-900 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"/><div className="flex justify-end gap-1"><button type="button" disabled={!index} onClick={() => setChargesDraft(previous => { const copy = [...previous]; [copy[index - 1], copy[index]] = [copy[index], copy[index - 1]]; return copy; })} className="rounded bg-slate-200 px-2 py-1 disabled:opacity-40">↑</button><button type="button" disabled={index === chargesDraft.length - 1} onClick={() => setChargesDraft(previous => { const copy = [...previous]; [copy[index + 1], copy[index]] = [copy[index], copy[index + 1]]; return copy; })} className="rounded bg-slate-200 px-2 py-1 disabled:opacity-40">↓</button><button type="button" onClick={() => setChargesDraft(previous => previous.filter((_, i) => i !== index))} className="rounded bg-rose-100 px-2 py-1 text-rose-700">×</button></div></div>)}<button type="button" onClick={() => setChargesDraft(previous => [...previous, { id: `charge-${Date.now()}`, name: "Custom charge", rate: "0" }])} className="rounded bg-blue-50 px-4 py-2 font-semibold text-blue-700">+ Add a charge</button></div><div className="flex justify-end gap-3 border-t border-slate-200 p-4 dark:border-slate-700"><button onClick={() => { setCustomModalOpen(false); updateMethod(previousMethod); }} className="rounded bg-slate-200 px-5 py-2 font-bold">Cancel</button><button onClick={saveCustomCharges} disabled={!chargesDraft.length} className="rounded bg-emerald-600 px-5 py-2 font-bold text-white disabled:opacity-50">Save and use</button></div></div></div>}
     </div>
   );
 }

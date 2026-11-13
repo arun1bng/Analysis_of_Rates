@@ -19,6 +19,20 @@ function parseStoredAnalysis(value: unknown) {
   }
 }
 
+function extractGstMultiplier(rows: any[]) {
+  for (const row of rows || []) {
+    const description = String(row?.description || "");
+    if (!/\bGST\b/i.test(description)) continue;
+    const factor = description.match(/multiplying\s+factor\s*[:=]?\s*(\d+(?:\.\d+)?)/i);
+    if (factor) return Number(factor[1]);
+    const percentage = description.match(/@\s*(\d+(?:\.\d+)?)\s*%/);
+    if (percentage) return Number(percentage[1]) / 100;
+    const direct = Number(row.gstMultiplier ?? row.gst_multiplier ?? row.gstFactor ?? row.gst_factor);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+  }
+  return null;
+}
+
 function findCustomAnalysis(code: string) {
   if (fs.existsSync(nsrDatabasePath)) {
     let customDb: Database.Database | undefined;
@@ -65,6 +79,27 @@ function addMissingBulkCostAmounts(rows: any[]) {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = String(searchParams.get("code") || "").trim();
+  if (searchParams.get("gstMultiplier") === "1") {
+    try {
+      let rows: any[] = [];
+      if (code) {
+        const customRows = findCustomAnalysis(code);
+        if (customRows?.length) rows = customRows;
+        else {
+          const itemInfo = db.prepare("SELECT dar_item_id FROM dar_items WHERE LOWER(TRIM(item_code)) = LOWER(?)").get(code) as { dar_item_id: number } | undefined;
+          if (itemInfo) rows = db.prepare("SELECT description FROM rate_analysis WHERE dar_item_id = ? ORDER BY component_sequence").all(itemInfo.dar_item_id) as any[];
+        }
+      }
+      if (!rows.length) {
+        rows = db.prepare(`SELECT description FROM rate_analysis
+          WHERE LOWER(description) LIKE '%gst%' ORDER BY dar_item_id, component_sequence LIMIT 100`).all() as any[];
+      }
+      return NextResponse.json({ multiplier: extractGstMultiplier(rows) });
+    } catch (error) {
+      console.error("GST multiplier lookup error:", error);
+      return NextResponse.json({ multiplier: null });
+    }
+  }
   if (!code) return NextResponse.json({ error: "Code is required" }, { status: 400 });
 
   try {

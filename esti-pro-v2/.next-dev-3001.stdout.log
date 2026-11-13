@@ -1,0 +1,10 @@
+
+> esti-pro-v2@0.1.0 dev
+> next dev --webpack --port 3001
+
+▲ Next.js 16.4.2 (webpack)
+- Local:         http://localhost:3001
+- Network:       http://192.168.29.150:3001
+✓ Ready in 571ms
+✓ Running next.config.ts took 55ms
+[?25h

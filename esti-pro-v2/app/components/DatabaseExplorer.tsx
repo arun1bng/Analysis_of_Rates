@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
+import { exportMultiRANSItemsToExcel } from "../utils/exportMultiRANSItemsToExcel";
+import { exportMultiRANSItemsToPdf } from "../utils/exportMultiRANSItemsToPdf";
 
 const HighlightText = ({ text, query, highlightClass }: { text: string, query: string, highlightClass: string }) => {
   if (!query || typeof text !== 'string') return <>{text}</>;
@@ -17,6 +19,7 @@ const HighlightText = ({ text, query, highlightClass }: { text: string, query: s
 
 const cleanCode = (c: any) => c?.toString().trim() || "";
 const isExternalRateItem = (item: any) => item?.isExternalAR === true || Number(item?.is_external_ar) === 1;
+const isSpecialARCode = (code: unknown) => /^(?:49\.|ar-)/i.test(String(code ?? "").trim());
 
 const sortCodes = (a: string, b: string) => {
   const regex = /(\d+)|([a-zA-Z]+)/g;
@@ -38,7 +41,7 @@ const sortCodes = (a: string, b: string) => {
 
 export default function DatabaseExplorer({ 
   rates, search, setSearch, addToMeasurement, addAllToMeasurement, handleViewAR, theme,
-  checkedItems, setCheckedItems, estimateRows, onOpenCreateModal, onEditNSR, onDeleteNSR, customRateCodes = [], selectedSHTarget
+  checkedItems, setCheckedItems, estimateRows, onOpenCreateModal, onEditNSR, onDeleteNSR, customRateCodes = [], selectedSHTarget, projectDetails = {}
 }: any) {
   
   const safeRates = useMemo(() => {
@@ -135,15 +138,48 @@ export default function DatabaseExplorer({
     return matchesSearch && (matchesSH || mainSearchQuery.length > 0);
   });
 
+  const nsItemsArray = useMemo(() => filteredRates
+    .filter((item: any) => cleanCode(item.code).startsWith("51"))
+    .map((item: any) => ({
+      itemNo: item.itemNo ?? item.item_no ?? cleanCode(item.code),
+      itemCode: cleanCode(item.code),
+      itemDescription: item.description ?? item.itemDescription ?? "",
+      unit: item.unit ?? "",
+      baseQty: item.baseQty ?? item.base_qty ?? item.nsrSettings?.baseQty ?? null,
+      analysisRows: Array.isArray(item.analysisRows) ? item.analysisRows : [],
+      isExternalAR: isExternalRateItem(item),
+      isParentHeading: Boolean(item.isParentHeading ?? item.is_parent_heading),
+      nsrSettings: item.nsrSettings ?? item.settings ?? {},
+    })), [filteredRates]);
+
+  const mdsrItemsArray = useMemo(() => filteredRates
+    .filter((item: any) => cleanCode(item.code).startsWith("50"))
+    .map((item: any) => ({
+      itemNo: item.itemNo ?? item.item_no ?? cleanCode(item.code),
+      itemCode: cleanCode(item.code),
+      itemDescription: item.description ?? item.itemDescription ?? "",
+      unit: item.unit ?? "",
+      baseQty: item.baseQty ?? item.base_qty ?? item.nsrSettings?.baseQty ?? null,
+      analysisRows: Array.isArray(item.analysisRows) ? item.analysisRows : [],
+      isExternalAR: isExternalRateItem(item),
+      isParentHeading: Boolean(item.isParentHeading ?? item.is_parent_heading),
+      nsrSettings: item.nsrSettings ?? item.settings ?? {},
+    })), [filteredRates]);
+
+  const activeExportFamily = selectedSH.startsWith("SH 50:") ? "mDSR" : selectedSH.startsWith("SH 51:") ? "NS" : null;
+  const activeExportItems = activeExportFamily === "mDSR" ? mdsrItemsArray : nsItemsArray;
+
   const validEntriesCount = filteredRates.filter((r: any) => isExternalRateItem(r) || (r.rate && Number(r.rate) > 0)).length;
+  const displayedItemsCount = selectedSH.startsWith("SH 49:") ? filteredRates.length : validEntriesCount;
 
   const handleCheckboxToggle = (code: string) => {
     const safeC = cleanCode(code);
+    if (isSpecialARCode(safeC)) return;
     setCheckedItems((prev: string[]) => prev.includes(safeC) ? prev.filter(c => c !== safeC) : [safeC, ...prev]);
   };
 
   const handleAddCheckedItems = () => {
-    const itemsToAdd = safeRates.filter((r: any) => checkedItems.includes(cleanCode(r.code)) && !boqTrack[cleanCode(r.code)] && (isExternalRateItem(r) || Number(r.rate) > 0));
+    const itemsToAdd = safeRates.filter((r: any) => !isSpecialARCode(r.code) && checkedItems.includes(cleanCode(r.code)) && !boqTrack[cleanCode(r.code)] && (isExternalRateItem(r) || Number(r.rate) > 0));
     addAllToMeasurement(itemsToAdd);
     
     setCheckedItems((prev: string[]) => prev.filter(c => {
@@ -154,7 +190,7 @@ export default function DatabaseExplorer({
   };
 
   const handleAddAllToBOQ = () => {
-    const itemsToAdd = safeRates.filter((r: any) => checkedItems.includes(cleanCode(r.code)) && !boqTrack[cleanCode(r.code)] && (isExternalRateItem(r) || Number(r.rate) > 0));
+    const itemsToAdd = safeRates.filter((r: any) => !isSpecialARCode(r.code) && checkedItems.includes(cleanCode(r.code)) && !boqTrack[cleanCode(r.code)] && (isExternalRateItem(r) || Number(r.rate) > 0));
     addAllToMeasurement(itemsToAdd);
   };
 
@@ -166,7 +202,7 @@ export default function DatabaseExplorer({
     const codes = bulkInput.match(/\b\d+[a-zA-Z]*(?:\.\d+[a-zA-Z]*)+\b/gi) || [];
     const validCodes = codes.map(c => {
       const match = safeRates.find((r: any) => cleanCode(r.code).toLowerCase() === c.toLowerCase());
-      return (match && (isExternalRateItem(match) || Number(match.rate) > 0)) ? cleanCode(match.code) : null;
+      return (match && !isSpecialARCode(match.code) && (isExternalRateItem(match) || Number(match.rate) > 0)) ? cleanCode(match.code) : null;
     }).filter(Boolean) as string[];
     
     if (validCodes.length > 0) {
@@ -223,7 +259,7 @@ export default function DatabaseExplorer({
 
     list = list.map(c => {
       const match = safeRates.find((r: any) => cleanCode(r.code).toLowerCase() === c.toLowerCase());
-      return (match && (isExternalRateItem(match) || Number(match.rate) > 0)) ? cleanCode(match.code) : null;
+      return (match && !isSpecialARCode(match.code) && (isExternalRateItem(match) || Number(match.rate) > 0)) ? cleanCode(match.code) : null;
     }).filter(Boolean) as string[];
     
     setHeardCodes(list);
@@ -253,7 +289,7 @@ export default function DatabaseExplorer({
     if (recognitionRef.current) recognitionRef.current.stop();
     setIsListening(false);
     if (heardCodes.length > 0) {
-      const toAdd = heardCodes.filter(c => !checkedItems.includes(c));
+      const toAdd = heardCodes.filter(c => !isSpecialARCode(c) && !checkedItems.includes(c));
       setCheckedItems((prev: string[]) => [...toAdd, ...prev]);
     }
     setVoiceText("");
@@ -270,7 +306,7 @@ export default function DatabaseExplorer({
     : baseGlimpseItems;
 
   return (
-    <div className="flex-1 flex overflow-hidden bg-slate-950 text-slate-100 font-sans text-sm relative">
+    <div className="flex-1 flex overflow-hidden bg-olive-light text-slate-800 dark:bg-slate-950 dark:text-slate-100 font-sans text-sm relative">
       
       {isListening && (
         <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-8">
@@ -357,6 +393,7 @@ export default function DatabaseExplorer({
           ) : searchedGlimpseItems.map((item: any, i: number) => {
             const safeCode = cleanCode(item.code);
             const isInBoq = boqTrack[safeCode];
+            const isSpecialAR = isSpecialARCode(safeCode);
             return (
               <div key={i} className={`border border-slate-700 p-2 rounded relative shadow flex items-center justify-between transition-colors ${isInBoq ? 'bg-slate-900/50 opacity-60' : 'bg-slate-800 hover:bg-slate-700'}`}>
                 <div className="flex items-center gap-3">
@@ -386,6 +423,8 @@ export default function DatabaseExplorer({
                     <span className="bg-emerald-900/50 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded text-[10px] font-bold shadow-inner">
                       In BOQ
                     </span>
+                  ) : isSpecialAR ? (
+                    <span className="px-2 py-0.5 text-[10px] font-bold text-slate-500" title="Special AR reference only; cannot be added to BOQ">AR reference</span>
                   ) : (
                     <>
                       <button onClick={() => addToMeasurement(item)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded font-bold transition-colors shadow-sm text-[10px]">
@@ -406,7 +445,7 @@ export default function DatabaseExplorer({
       <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 z-10">
         <div className="p-3 border-b border-slate-800 flex flex-wrap justify-between items-center gap-3 bg-slate-900">
           <div className="font-bold text-blue-400 text-sm">
-            {selectedSH} ({validEntriesCount} items)
+            {selectedSH} ({displayedItemsCount} items)
           </div>
 
           <div className="flex items-center gap-2 text-sm">
@@ -436,7 +475,27 @@ export default function DatabaseExplorer({
                 </div>
               )}
             </div>
-            <button className="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded font-bold shadow ml-1">Export CSV</button>
+            {activeExportFamily && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-teal-700/60 bg-slate-900 px-3 py-1.5">
+                <span className="text-sm font-bold text-teal-200">Export RA of {activeExportFamily} Items to</span>
+                <button
+                  type="button"
+                  onClick={() => void exportMultiRANSItemsToExcel(activeExportItems, `${activeExportFamily}_Items_Rate_Analysis`, safeRates, projectDetails)}
+                  disabled={activeExportItems.length === 0}
+                  className="rounded bg-teal-600 px-3 py-1.5 text-sm font-bold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportMultiRANSItemsToPdf(activeExportItems, safeRates, projectDetails, activeExportFamily)}
+                  disabled={activeExportItems.length === 0}
+                  className="rounded bg-rose-600 px-3 py-1.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  PDF
+                </button>
+              </div>
+            )}
             <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 ml-2">
               <input type="checkbox" checked={fullWrap} onChange={(e) => setFullWrap(e.target.checked)} className="rounded bg-slate-800 border-slate-700 accent-blue-600" />
               <span>Full Multi-line Wrap</span>
@@ -479,15 +538,18 @@ export default function DatabaseExplorer({
                 filteredRates.map((item: any, idx: number) => {
                   const safeCode = cleanCode(item.code);
                   const isExternalAR = isExternalRateItem(item);
-                  const isParent = !isExternalAR && (!item.rate || Number(item.rate) === 0);
+                  const isSpecialAR = isSpecialARCode(safeCode);
+                  const isParent = !isSpecialAR && !isExternalAR && (!item.rate || Number(item.rate) === 0);
+                  const isSelectable = !isParent && !isSpecialAR;
+                  const canViewAR = isSpecialAR || isExternalAR || !isParent;
                   const isInBoq = boqTrack[safeCode];
                   const isSelected = checkedItems.includes(safeCode);
 
                   return (
                     <tr id={`item-${safeCode}`} key={idx} className={`transition-colors ${activeGlimpseCode === safeCode ? "bg-amber-900/70 ring-2 ring-inset ring-amber-400" : isParent ? 'bg-slate-900/90 font-bold text-amber-400' : isInBoq ? 'bg-slate-950 opacity-50 pointer-events-none' : 'hover:bg-slate-900/50 text-base'}`}>
                       
-                      <td className="p-3 font-mono text-blue-400 font-bold text-base pl-6 relative">
-                        {!isParent ? (
+                      <td className={`p-3 font-mono font-bold text-base pl-6 relative ${isSpecialAR ? "text-slate-500 opacity-60" : "text-blue-400"}`}>
+                        {isSelectable ? (
                            <span onClick={() => !isInBoq && handleCheckboxToggle(safeCode)} className={`flex items-center gap-2 ${isInBoq ? 'cursor-not-allowed' : 'cursor-pointer hover:underline underline-offset-4'}`} title={isInBoq ? "Already in BOQ" : "Click to toggle selection"}>
                              <HighlightText text={safeCode} query={mainSearchQuery} highlightClass="main-highlight" />
                              {isSelected && !isInBoq && <span className="text-[10px] bg-blue-900/50 text-blue-400 px-1.5 py-0.5 rounded border border-blue-800">Selected</span>}
@@ -505,14 +567,14 @@ export default function DatabaseExplorer({
                       <td className={`p-3 text-slate-200 text-justify text-base leading-relaxed ${fullWrap ? '' : 'truncate max-w-xl'}`}>
                         <HighlightText text={formatDescription(item.description || "", cleanCode(item.code))} query={mainSearchQuery} highlightClass="main-highlight" />
                       </td>
-                      <td className="p-3 text-center text-slate-400 text-sm">{item.unit ?? ""}</td>
-                      <td className="p-3 text-right font-mono text-green-400 font-bold text-base">{item.rate === null || item.rate === undefined || item.rate === "" ? "" : Number(item.rate).toFixed(2)}</td>
+                      <td className="p-3 text-center text-slate-400 text-sm">{isParent ? "" : item.unit ?? ""}</td>
+                      <td className="p-3 text-right font-mono text-green-400 font-bold text-base">{isParent || item.rate === null || item.rate === undefined || item.rate === "" ? "" : Number(item.rate).toFixed(2)}</td>
                       <td className="p-3 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          {!isParent && !isExternalAR && (
+                          {canViewAR && (
                             <button onClick={() => handleViewAR(item)} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-bold shadow transition-colors pointer-events-auto">View AR</button>
                           )}
-                          {!isParent && customRateCodes.includes(safeCode) && (
+                          {customRateCodes.includes(safeCode) && (
                             <>
                               <button onClick={() => onEditNSR && onEditNSR(item)} className="px-2 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold shadow transition-colors pointer-events-auto">Edit</button>
                               <button onClick={() => setDeleteConfirmItem(item)} className="px-2 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-bold shadow transition-colors pointer-events-auto">✕</button>

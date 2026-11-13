@@ -4,14 +4,17 @@ import React, { useEffect, useRef, useState } from "react";
 import { AlignmentType, BorderStyle, Document, ImageRun, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { saveAs } from "file-saver";
 import { usePageTools } from "./PageToolsContext";
-import { calculateAbstractTotals } from "../utils/abstractTotals";
+import { calculateAbstractTotals, resolveEstimateRate } from "../utils/abstractTotals";
 import { fitPngWithinBox } from "../utils/pngSizing";
+import { exportJustfnFrontSheetToExcel, exportJustfnFrontSheetToPdf } from "../utils/exportJustfnToExcel";
+import { openEstimatePdfWindow } from "../utils/exportTableToExcel";
 
 type EstimateRow = { itemCode?: string; itemNo?: string; quantity?: number | string | null; rate?: number | string | null };
 export type JustificationSummaryInputs = { nitNumber: string; lowestContractor: string; contractorTenderedAmount: string };
 type Props = {
   estimateRows: EstimateRow[];
   baseEstimateRows?: EstimateRow[];
+  rates?: any[];
   theme?: string;
   marketRates?: Record<string, number | string | null | undefined>;
   baseMarketRates?: Record<string, number | string | null | undefined>;
@@ -20,6 +23,7 @@ type Props = {
   projectId?: string;
   summaryInputs: JustificationSummaryInputs;
   onSummaryInputsChange: (next: JustificationSummaryInputs) => void;
+  onExportMasterJustfn?: () => void;
 };
 type SummaryRow = { number: string; label: string; prefix?: string; value: number | string; suffix?: string; emphasis?: boolean };
 
@@ -32,7 +36,6 @@ const formatAmount = (value: number, format = "Indian (Lakhs/Crores)") => {
 };
 const formatPercent = (value: number) => Number.isFinite(value) ? value.toFixed(2) + "%" : "—";
 const isNS = (code: string) => /^(?:NSR|51(?:\.|$))/i.test(code);
-const isMDSR = (code: string) => /^50(?:\.|$)/.test(code);
 const escapeXml = (value: unknown) => String(value ?? "").replace(/[<>&'"]/g, char => {
   const entities: Record<string, string> = { "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", "\"": "&quot;" };
   return entities[char] || char;
@@ -82,13 +85,14 @@ function createStoredZip(files: Array<{ name: string; data: string | Uint8Array 
 }
 
 export default function JustificationSummary({
-  estimateRows, baseEstimateRows = estimateRows, theme = "dark", marketRates = {}, baseMarketRates = marketRates,
-  projectDetails = {}, justificationPercentage, projectId = "Estimate", summaryInputs, onSummaryInputsChange,
+  estimateRows, baseEstimateRows = estimateRows, rates = [], theme = "dark", marketRates = {}, baseMarketRates = marketRates,
+  projectDetails = {}, justificationPercentage, projectId = "Estimate", summaryInputs, onSummaryInputsChange, onExportMasterJustfn,
 }: Props) {
   const { registerPageTools } = usePageTools();
   const exportWordRef = useRef<() => void>(() => undefined);
   const exportExcelRef = useRef<() => void>(() => undefined);
   const exportPdfRef = useRef<() => void>(() => undefined);
+  const findContainerRef = useRef<HTMLDivElement>(null);
   const isDark = theme !== "light";
   const [tenderAmountFocused, setTenderAmountFocused] = useState(false);
   const currencyFormat = String(projectDetails.currencyFormat || "Indian (Lakhs/Crores)");
@@ -97,30 +101,38 @@ export default function JustificationSummary({
   const subHeads = String(projectDetails.subHeads || "").trim();
   const fullWorkName = [workName, subHeads ? "SH: " + subHeads : ""].filter(Boolean).join("\n");
 
-  const scheduleEstimate = estimateRows.reduce((sum, item) => {
+  const groupedSelectedItems = new Map<string, { item: EstimateRow; quantity: number }>();
+  estimateRows.forEach(item => {
     const code = String(item.itemCode || item.itemNo || "").trim();
-    return isNS(code) ? sum : sum + roundWhole((Number(item.rate) || 0) * (Number(item.quantity) || 0));
+    if (!code) return;
+    const existing = groupedSelectedItems.get(code);
+    if (existing) existing.quantity += Number(item.quantity) || 0;
+    else groupedSelectedItems.set(code, { item, quantity: Number(item.quantity) || 0 });
+  });
+  const groupedItems = [...groupedSelectedItems.entries()].map(([code, group]) => ({ code, ...group }));
+  const estimateRateFor = (code: string, item: EstimateRow) => isNS(code)
+    ? Number(baseMarketRates[code] ?? resolveEstimateRate(item, rates)) || 0
+    : resolveEstimateRate(item, rates);
+
+  const scheduleEstimate = groupedItems.reduce((sum, { code, item, quantity }) => {
+    return isNS(code) ? sum : sum + roundWhole(estimateRateFor(code, item) * quantity);
   }, 0);
-  const dsrEstimate = estimateRows.reduce((sum, item) => {
-    const code = String(item.itemCode || item.itemNo || "").trim();
-    return !code || isNS(code) || isMDSR(code) ? sum : sum + roundWhole((Number(item.rate) || 0) * (Number(item.quantity) || 0));
+  const nsEstimate = groupedItems.reduce((sum, { code, item, quantity }) => {
+    return isNS(code) ? sum + roundWhole(estimateRateFor(code, item) * quantity) : sum;
   }, 0);
-  const nsEstimate = estimateRows.reduce((sum, item) => {
-    const code = String(item.itemCode || item.itemNo || "").trim();
-    return isNS(code) ? sum + roundWhole((Number(item.rate) || 0) * (Number(item.quantity) || 0)) : sum;
-  }, 0);
-  const selectedJustifiedAmount = estimateRows.reduce((sum, item) => {
-    const code = String(item.itemCode || item.itemNo || "").trim();
-    const estimateRate = Number(item.rate) || 0;
+  const selectedJustifiedAmount = groupedItems.reduce((sum, { code, item, quantity }) => {
+    const estimateRate = estimateRateFor(code, item);
     const justifiedRate = isNS(code) ? estimateRate : marketRates[code] !== undefined ? Number(marketRates[code]) || 0 : estimateRate;
-    return sum + roundWhole((Number(item.quantity) || 0) * justifiedRate);
+    return sum + roundWhole(quantity * justifiedRate);
   }, 0);
   const costIndex = Number(projectDetails.costIndex ?? 15) || 0;
   const rawMultiplier = Number(projectDetails.gstModificationFactor ?? 0.973);
   const multiplier = Number.isFinite(rawMultiplier) ? rawMultiplier : 0.973;
-  const costIndexAmount = roundWhole(dsrEstimate * costIndex / 100);
+  // Cost index applies to the full scheduled base (DSR + mDSR), matching the
+  // Estimate Abstract and the Justification Statement calculation.
+  const costIndexAmount = roundWhole(scheduleEstimate * costIndex / 100);
   const estimatedCostConsidered = roundWhole((scheduleEstimate + costIndexAmount) * multiplier) + roundWhole(nsEstimate);
-  const estimatedPutToTender = calculateAbstractTotals(baseEstimateRows, projectDetails, baseMarketRates).baseCombined;
+  const estimatedPutToTender = calculateAbstractTotals(baseEstimateRows, projectDetails, baseMarketRates, rates).baseCombined;
   const correspondingJustifiedAmount = roundWhole(selectedJustifiedAmount);
   const proRataJustifiedAmount = estimatedCostConsidered > 0 ? roundWhole(estimatedPutToTender * correspondingJustifiedAmount / estimatedCostConsidered) : 0;
   const consideredPercent = estimatedPutToTender > 0 ? estimatedCostConsidered / estimatedPutToTender * 100 : 0;
@@ -136,13 +148,19 @@ export default function JustificationSummary({
     ? "Justified Percentage At Par Estimated cost put to tender (ECPT):-"
     : "Justified Percentage " + (belowTenderPercent < 0 ? "Below" : "Above") + " Estimated cost put to tender (ECPT):-";
   const tenderVsJustifiedDirection = Math.abs(aboveJustifiedPercent) < 0.005 ? "At Par" : aboveJustifiedPercent < 0 ? "below" : "Above";
+  const deviationDirection = justificationPercentage == null || Math.abs(justificationPercentage) < 0.005
+    ? "At Par"
+    : justificationPercentage < 0 ? "Below" : "Above";
+  const deviationSummary = justificationPercentage == null
+    ? null
+    : `Justified Percentage ${deviationDirection} ECPT: ${formatPercent(justificationPercentage)}`;
   const rows: SummaryRow[] = [
-    { number: "1.", label: "Estimated Cost Put to tender:-", prefix: "Rs.", value: estimatedPutToTender, emphasis: true },
-    { number: "2.", label: "Estimated cost considered for justification:-", prefix: "Rs.", value: estimatedCostConsidered },
+    { number: "1.", label: "Estimated cost put to tender [ECPT]:-", prefix: "Rs.", value: estimatedPutToTender, emphasis: true },
+    { number: "2.", label: "Total of Estimated Cost of Items considered for Justificatoin:-", prefix: "Rs.", value: estimatedCostConsidered },
     { number: "3.", label: "Percentage of Estimated cost considered for Justification:-", value: consideredPercent, suffix: "%" },
     { number: "4.", label: "Corresponding Justified Amount:-", prefix: "Rs.", value: correspondingJustifiedAmount },
     { number: "5.", label: "Total Justified amount on Pro-Rata basis:-", prefix: "Rs.", value: proRataJustifiedAmount, emphasis: true },
-    { number: "6.", label: belowTenderLabel, value: Math.abs(belowTenderPercent), suffix: "%" },
+    { number: "6.", label: belowTenderLabel, value: Math.abs(belowTenderPercent), suffix: "%", emphasis: true },
     { number: "7.", label: "Name of First lowest Contractor (L1):-", value: summaryInputs.lowestContractor },
     { number: "8.", label: "First lowest Contractor's (L1) Tendered Amount:-", prefix: "Rs.", value: tenderedAmount, emphasis: true },
     { number: "9.", label: "Clause 12: % age:-", value: deviationText(clause12Percent, "ECPT") },
@@ -372,34 +390,60 @@ export default function JustificationSummary({
 
   useEffect(() => {
     exportWordRef.current = () => void exportToWord();
-    exportExcelRef.current = exportToExcel;
-    exportPdfRef.current = () => window.print();
-  });
+    exportExcelRef.current = () => {
+      void exportJustfnFrontSheetToExcel({
+        estimateData: { estimateRows: baseEstimateRows as any[], rates, marketRates: baseMarketRates, projectDetails },
+        statementRows: estimateRows as any[],
+        justifiedRates: marketRates,
+        baseMarketRates,
+        summaryInputs,
+      }, projectId);
+    };
+    exportPdfRef.current = () => {
+      const printWindow = openEstimatePdfWindow();
+      if (!printWindow) { alert("Allow pop-ups to export the PDF."); return; }
+      void exportJustfnFrontSheetToPdf({
+        estimateData: { estimateRows: baseEstimateRows as any[], rates, marketRates: baseMarketRates, projectDetails },
+        statementRows: estimateRows as any[],
+        justifiedRates: marketRates,
+        baseMarketRates,
+        summaryInputs,
+      }, projectId, printWindow).catch(error => {
+        printWindow.close();
+        console.error("Could not export the Justification Front Sheet PDF:", error);
+        alert(error instanceof Error ? error.message : "Could not export the Justification Front Sheet PDF.");
+      });
+    };
+  }, [baseEstimateRows, rates, baseMarketRates, projectDetails, estimateRows, marketRates, summaryInputs, projectId]);
 
   useEffect(() => registerPageTools("justsummary", { exportActions: [
-    { id: "export-justification-word", label: "Export Word Doc", onClick: () => exportWordRef.current(), className: "bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow" },
-    { id: "export-justification-excel", label: "Export Excel", onClick: () => exportExcelRef.current(), className: "bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow" },
+    ...(onExportMasterJustfn ? [{ id: "export-master-justfn", label: "Export Master Justfn", onClick: onExportMasterJustfn, className: "bg-violet-600 hover:bg-violet-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow" }] : []),
     { id: "export-justification-pdf", label: "Export PDF", onClick: () => exportPdfRef.current(), className: "bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow" },
-  ] }), [registerPageTools]);
+  ], searchContainerRef: findContainerRef }), [registerPageTools, onExportMasterJustfn]);
 
   const cellClass = isDark
     ? "border border-slate-700 px-3 py-2 align-middle text-slate-100 print:border-black print:text-black"
     : "border border-black px-3 py-2 align-middle text-black";
-  const editableClass = cellClass + (isDark ? " bg-slate-800 print:bg-white" : " bg-amber-50 print:bg-white");
+  const editableClass = cellClass + (isDark ? " bg-slate-800 print:bg-white" : " bg-olive-light print:bg-white");
   const inputClass = "w-full border-0 bg-transparent px-2 py-1 outline-none focus:ring-1 " + (isDark ? "text-slate-100 focus:bg-slate-700 focus:ring-blue-500 print:text-black" : "text-black focus:bg-amber-50 focus:ring-amber-500");
   const textInput = (key: keyof JustificationSummaryInputs, label: string, value: string, className = inputClass) =>
     <input aria-label={label} className={className} value={value} onChange={event => updateInput(key, event.target.value)} />;
 
   return (
-    <div className={"flex-1 overflow-y-auto p-5 " + (isDark ? "bg-slate-950 text-slate-100" : "bg-gray-100 text-gray-900")}>
+    <div ref={findContainerRef} className={"flex-1 overflow-y-auto p-5 " + (isDark ? "bg-slate-950 text-slate-100" : "bg-gray-100 text-gray-900")}>
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700 pb-3 print:hidden">
         <h1 className="text-lg font-extrabold uppercase tracking-wider text-blue-400">Justification Front Sheet / Summary</h1>
-        {justificationPercentage !== null && justificationPercentage !== undefined && <span className="text-sm text-slate-400">Statement deviation: {formatPercent(justificationPercentage)}</span>}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {deviationSummary && <span className="mr-2 text-sm font-bold text-slate-200">{deviationSummary}</span>}
+          <button type="button" onClick={() => exportWordRef.current()} className="rounded bg-blue-600 px-3 py-1.5 text-xs font-bold text-white shadow hover:bg-blue-500">Export Word Doc</button>
+          <button type="button" onClick={() => exportExcelRef.current()} className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-500">Export Excel</button>
+          <button type="button" onClick={() => exportPdfRef.current()} className="rounded bg-rose-600 px-3 py-1.5 text-xs font-bold text-white shadow hover:bg-rose-500">Export PDF</button>
+        </div>
       </header>
-      <div className={"mx-auto max-w-5xl border p-5 shadow-xl print:max-w-none print:border-0 print:bg-white print:p-0 print:text-black print:shadow-none " + (isDark ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-400 bg-white text-black")}>
+      <div className={"mx-auto max-w-5xl border p-5 shadow-xl print:max-w-none print:border-0 print:bg-white print:p-0 print:text-black print:shadow-none " + (isDark ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-400 bg-olive-card text-black")}>
         <table className={"w-full border-collapse text-sm " + (isDark ? "text-slate-100 print:text-black" : "text-black")}>
           <colgroup><col className="w-1/4"/><col className="w-3/4"/></colgroup>
-          <thead><tr><th colSpan={2} className={cellClass + " py-3 text-center text-lg font-bold " + (isDark ? "bg-slate-800" : "bg-white")}>Justification Statement (Civil work)</th></tr></thead>
+          <thead><tr><th colSpan={2} className={cellClass + " py-3 text-center text-lg font-bold " + (isDark ? "bg-slate-800" : "bg-olive-card")}>Justification Statement (Civil work)</th></tr></thead>
           <tbody>
             <tr><th className={cellClass + " text-left font-bold"}>N.I.T. No.:-</th><td className={editableClass}>{textInput("nitNumber", "N.I.T. Number", summaryInputs.nitNumber)}</td></tr>
             <tr><th className={cellClass + " text-left align-top font-bold"}>Name of Work :-</th><td className={cellClass + " whitespace-pre-line text-justify"}>{fullWorkName || "—"}</td></tr>
@@ -409,13 +453,13 @@ export default function JustificationSummary({
           <colgroup><col className="w-[7%]"/><col className="w-[57%]"/><col className="w-[9%]"/><col className="w-[27%]"/></colgroup>
           <tbody>
             <tr><th colSpan={4} className={cellClass + " text-center font-bold " + (isDark ? "bg-slate-800" : "bg-gray-100")}>With Respect to Lowest Tender</th></tr>
-            {rows.slice(0, 5).map(row => <tr key={row.number} className={row.emphasis ? "font-bold" : ""}>
+            {rows.slice(0, 5).map(row => <tr data-find-row key={row.number} className={row.emphasis ? "font-bold" : ""}>
               <td className={cellClass + " text-right"}>{row.number}</td><td className={cellClass}>{row.label}</td>
               <td className={cellClass + " text-right"}>{row.prefix || ""}</td><td className={cellClass + " text-right font-mono"}>{displayValue(row)}</td>
             </tr>)}
             <tr><td colSpan={4} className={cellClass + " pl-[7%] text-left font-semibold"}>Pro-rata calculation: {formatMoney(estimatedPutToTender)} × {formatMoney(correspondingJustifiedAmount)} ÷ {formatMoney(estimatedCostConsidered)} = Rs. {formatMoney(proRataJustifiedAmount)}</td></tr>
-            {rows.slice(5, 6).map(row => <tr key={row.number} className={row.emphasis ? "font-bold" : ""}><td className={cellClass + " text-right"}>{row.number}</td><td className={cellClass}>{row.label}</td><td className={cellClass + " text-right"}>{row.prefix || ""}</td><td className={cellClass + " text-right font-mono"}>{displayValue(row)}</td></tr>)}
-            {rows.slice(6).map(row => <tr key={row.number} className={row.emphasis ? "font-bold" : ""}>
+            {rows.slice(5, 6).map(row => <tr data-find-row key={row.number} className={row.emphasis ? "font-bold" : ""}><td className={cellClass + " text-right"}>{row.number}</td><td className={cellClass + (row.emphasis ? " font-bold" : "")}>{row.label}</td><td className={cellClass + " text-right"}>{row.prefix || ""}</td><td className={cellClass + " text-right font-mono" + (row.emphasis ? " font-bold" : "")}>{displayValue(row)}</td></tr>)}
+            {rows.slice(6).map(row => <tr data-find-row key={row.number} className={row.emphasis ? "font-bold" : ""}>
               <td className={cellClass + " text-right"}>{row.number}</td><td className={cellClass}>{row.label}</td>
               <td className={cellClass + " text-right"}>{row.prefix || ""}</td><td className={(row.number === "7." ? editableClass : cellClass) + " text-right font-mono"}>
                 {row.number === "7." ? textInput("lowestContractor", "First lowest contractor name", summaryInputs.lowestContractor, inputClass + " text-left")

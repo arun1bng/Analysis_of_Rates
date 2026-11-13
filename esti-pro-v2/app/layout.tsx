@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ThemeProvider } from "./components/ThemeProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -22,8 +23,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(() => { try { const mode = localStorage.getItem("esti-pro-theme") || "dark"; const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches; const resolved = mode === "system" ? (systemDark ? "dark" : "light") : (mode === "light" ? "light" : "dark"); const root = document.documentElement; root.classList.toggle("dark", resolved === "dark"); root.classList.toggle("light", resolved === "light"); root.dataset.theme = resolved; root.style.colorScheme = resolved; } catch (_) {} })();`,
+          }}
+        />
+      </head>
+      <body className="min-h-full flex flex-col bg-olive-light text-slate-800 dark:bg-slate-950 dark:text-slate-100">
+        <ThemeProvider>{children}</ThemeProvider>
+      </body>
     </html>
   );
 }

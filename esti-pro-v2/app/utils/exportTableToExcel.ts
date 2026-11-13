@@ -12,11 +12,13 @@ export type SharedEstimateData = {
   rates: Array<Record<string, unknown>>;
   marketRates: Record<string, number | string | null | undefined>;
   projectDetails: Record<string, unknown>;
+  rateAnalyses?: Record<string, any>;
 };
 
 export type SharedWorkbookRowRefs = {
   msmt: Record<string, { descRow: number; totalQtyRow?: number }>;
-  abst: Record<string, { descRow: number; subtotalRow?: number }>;
+  abst: Record<string, { descRow: number; subtotalRow?: number; itemRow?: number }>;
+  customRateAnalyses?: Record<string, { sheetName: string; descriptionRow: number; sayRow: number; description: string; unit: string; rate: number }>;
 };
 
 type SharedItemGroup = {
@@ -35,6 +37,14 @@ const sharedNumber = (value: unknown, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 const sharedText = (value: unknown, fallback = "") => String(value ?? fallback);
+const sharedFirstText = (...values: unknown[]) => {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const candidate = String(value).trim();
+    if (candidate) return candidate;
+  }
+  return "";
+};
 const sharedSectionKey = (code: string) => `SH:${code}`;
 const sharedSectionLabel = (code: string, label: string) => {
   if (code === "50") return "SH 50: MODIFIED DSR ITEMS";
@@ -69,9 +79,12 @@ function sharedContext(data: SharedEstimateData) {
       const base = rateByCode.get(code);
       group = {
         itemCode: code,
-        description: sharedText(base?.description ?? row.description),
-        unit: sharedText(row.unit ?? base?.unit),
-        rate: sharedNumber(data.marketRates[code] ?? row.rate ?? base?.rate),
+        // Keep measurement quantities from the estimate row, while resolving
+        // mutable NS/mDSR metadata and rates from the latest saved rate record.
+        description: sharedFirstText(row.userDescription, base?.description, base?.itemDescription, base?.item_description, row.description),
+        unit: sharedFirstText(base?.unit, row.unit),
+        rate: sharedNumber((/^(?:NSR|51\.)/i.test(code) ? data.marketRates[code] : undefined)
+          ?? base?.rate ?? base?.dsrRate ?? base?.dsr_rate ?? row.rate),
         quantity: 0,
         rows: [],
       };
@@ -99,28 +112,81 @@ function sharedCellFormula(sheet: ExcelJS.Worksheet, row: number, column: number
   sheet.getCell(row, column).value = { formula, result };
 }
 
-function sharedTitle(sheet: ExcelJS.Worksheet, title: string, workName: string, details: Record<string, unknown>, lastColumn = 7) {
+function sharedTitle(
+  sheet: ExcelJS.Worksheet,
+  title: string,
+  workName: string,
+  details: Record<string, unknown>,
+  lastColumn = 7,
+  generalAbstract = false,
+) {
   const lastColumnLetter = columnName(lastColumn);
+  // Keep the division details in a wide merged range so long names do not clip.
+  const leftInfoEnd = lastColumn > 7 ? 6 : generalAbstract ? 2 : 3;
+  const rightInfoStart = generalAbstract ? 6 : leftInfoEnd + 1;
+  const rightInfoStartLetter = columnName(rightInfoStart);
+  const leftInfoEndLetter = columnName(leftInfoEnd);
   sheet.mergeCells(`A1:${lastColumnLetter}1`);
   sheet.getCell("A1").value = title;
   sheet.getCell("A1").font = { name: "Book Antiqua", size: 14, bold: true };
   sheet.getCell("A1").alignment = { horizontal: "center", vertical: "middle" };
   sheet.getRow(1).height = 24;
   sheet.getCell("A3").value = `STATE : ${sharedText(details.state, "GOA")}`;
-  sheet.getCell(`${lastColumnLetter}3`).value = `DIVISION : ${sharedText(details.division, "GCD")}`;
+  sheet.getCell(`${rightInfoStartLetter}3`).value = `DIVISION : ${sharedText(details.division, "GCD")}`;
   sheet.getCell("A4").value = `BRANCH : ${sharedText(details.branch, "B&R")}`;
-  sheet.getCell(`${lastColumnLetter}4`).value = `SUB DIVISION : ${sharedText(details.subDivision, "Kolhapur Sub Division")}`;
-  for (const address of ["A3", `${lastColumnLetter}3`, "A4", `${lastColumnLetter}4`]) {
+  sheet.getCell(`${rightInfoStartLetter}4`).value = `SUB DIVISION : ${sharedText(details.subDivision, "Kolhapur Sub Division")}`;
+  sheet.mergeCells(`A3:${leftInfoEndLetter}3`);
+  sheet.mergeCells(`A4:${leftInfoEndLetter}4`);
+  sheet.mergeCells(`${rightInfoStartLetter}3:${lastColumnLetter}3`);
+  sheet.mergeCells(`${rightInfoStartLetter}4:${lastColumnLetter}4`);
+  sheet.getRow(3).height = 20;
+  sheet.getRow(4).height = 30;
+  for (const address of ["A3", `${rightInfoStartLetter}3`, "A4", `${rightInfoStartLetter}4`]) {
     sheet.getCell(address).font = { name: "Book Antiqua", size: 10 };
   }
-  sheet.getCell("A3").alignment = sheet.getCell("A4").alignment = { horizontal: "left" };
-  sheet.getCell(`${lastColumnLetter}3`).alignment = sheet.getCell(`${lastColumnLetter}4`).alignment = { horizontal: "right" };
+  sheet.getCell("A3").alignment = sheet.getCell("A4").alignment = { horizontal: "left", vertical: "middle" };
+  sheet.getCell(`${rightInfoStartLetter}3`).alignment = { horizontal: "right", vertical: "middle", wrapText: true, shrinkToFit: true };
+  sheet.getCell(`${rightInfoStartLetter}4`).alignment = { horizontal: "right", vertical: "middle", wrapText: true, shrinkToFit: true };
   sheet.mergeCells(`A6:${lastColumnLetter}6`);
   sheet.getCell("A6").value = `Name of Work : ${workName}`;
   sheet.getCell("A6").font = { name: "Book Antiqua", size: 10 };
   sheet.getCell("A6").alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   sheet.getRow(6).height = Math.max(18, Math.ceil(workName.length / 100) * 18);
   sheet.addRow([]);
+}
+
+function sharedFormattedCellValue(cell: ExcelJS.Cell): string {
+  const value = cell.value;
+  const raw = value && typeof value === "object" && "result" in value
+    ? (value as { result?: unknown }).result
+    : value;
+  if (raw === null || raw === undefined) return "";
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const numFmt = cell.numFmt || "";
+    const decimals = numFmt.split(".")[1]?.match(/[0#]+/)?.[0] || "";
+    const minFractionDigits = decimals.split("").filter(char => char === "0").length;
+    const maxFractionDigits = decimals.length;
+    return new Intl.NumberFormat("en-IN", {
+      useGrouping: true,
+      minimumFractionDigits: minFractionDigits,
+      maximumFractionDigits: maxFractionDigits,
+    }).format(raw);
+  }
+  if (typeof raw === "object" && "text" in raw) return String((raw as { text?: unknown }).text ?? "");
+  if (typeof raw === "object" && "richText" in raw) return (raw as { richText: Array<{ text: string }> }).richText.map(part => part.text).join("");
+  return String(raw);
+}
+
+function sharedAutoFitColumn(sheet: ExcelJS.Worksheet, column: number, minWidth: number, maxWidth: number) {
+  let longest = 0;
+  for (let rowNumber = 1; rowNumber <= sheet.rowCount; rowNumber++) {
+    const cell = sheet.getCell(rowNumber, column);
+    if (cell.isMerged) continue;
+    const text = sharedFormattedCellValue(cell);
+    const lineLength = text.split(/\r?\n/).reduce((max, line) => Math.max(max, line.length), 0);
+    longest = Math.max(longest, lineLength);
+  }
+  sheet.getColumn(column).width = Math.max(minWidth, Math.min(maxWidth, longest + 2));
 }
 
 function sharedHeader(sheet: ExcelJS.Worksheet, values: string[]) {
@@ -144,12 +210,15 @@ function sharedTableStyles(sheet: ExcelJS.Worksheet, endRow: number, lastColumn:
       cell.font = { name: "Book Antiqua", size: 10, ...(cell.font || {}) };
       cell.border = measurement && rowNumber === 8 ? headerBorder : standardBorder;
       if (!measurement) {
-        if (column === 2) cell.alignment = { ...cell.alignment, vertical: "middle", wrapText: true };
+        const mergedFinancialLabel = column === 2
+          && typeof sheet.getCell(rowNumber, 1).value === "string"
+          && sheet.getCell(rowNumber, 2).value == null;
+        if (column === 2 && !mergedFinancialLabel) cell.alignment = { ...cell.alignment, vertical: "middle", wrapText: true };
         continue;
       }
       if (column === 1 || column === 12) cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
       else if (column === 2) cell.alignment = { horizontal: "justify", vertical: "middle", wrapText: true };
-      else if ((column >= 3 && column <= 9) || column === 11) cell.alignment = { horizontal: "center", vertical: "middle" };
+      else if ((column >= 3 && column <= 9) || column === 11) cell.alignment = { horizontal: "center", vertical: "middle", ...(column === 11 ? { wrapText: true } : {}) };
       else if (column === 10) cell.alignment = { horizontal: "right", vertical: "middle" };
     }
   }
@@ -163,19 +232,23 @@ function sharedSignatories(sheet: ExcelJS.Worksheet, details: Record<string, unk
   titleRow.height = 20;
   const officeRow = sheet.addRow([]);
   officeRow.height = 20;
-  titleRow.getCell(2).value = sharedText(details.leftAETitle, "Assistant Engineer,");
-  officeRow.getCell(2).value = sharedText(details.leftAEOffice, "CPWD, Kolhapur.");
-  const leftEndColumn = 4;
-  const rightStartColumn = measurementLayout ? 9 : 5;
-  const rightEndColumn = measurementLayout ? 11 : 7;
+  titleRow.getCell(1).value = sharedText(details.leftAETitle, "Assistant Engineer,");
+  officeRow.getCell(1).value = sharedText(details.leftAEOffice, "CPWD, Kolhapur.");
+  const leftEndColumn = measurementLayout ? 6 : 4;
+  const rightStartColumn = measurementLayout ? 7 : 5;
+  const rightEndColumn = measurementLayout ? 12 : 7;
   titleRow.getCell(rightStartColumn).value = sharedText(details.rightAETitle, "Assistant Engineer,");
   officeRow.getCell(rightStartColumn).value = sharedText(details.rightAEOffice, "GCD, CPWD, Goa.");
   for (const row of [titleRow, officeRow]) {
-    sheet.mergeCells(`B${row.number}:${columnName(leftEndColumn)}${row.number}`);
+    sheet.mergeCells(`A${row.number}:${columnName(leftEndColumn)}${row.number}`);
     sheet.mergeCells(`${columnName(rightStartColumn)}${row.number}:${columnName(rightEndColumn)}${row.number}`);
-    row.getCell(2).font = row.getCell(rightStartColumn).font = { name: "Book Antiqua", size: 10 };
-    row.getCell(2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-    row.getCell(rightStartColumn).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    row.getCell(1).font = row.getCell(rightStartColumn).font = { name: "Book Antiqua", size: 10 };
+    for (let column = 1; column <= leftEndColumn; column++) {
+      row.getCell(column).alignment = { horizontal: "left", vertical: "middle", wrapText: false, shrinkToFit: true };
+    }
+    for (let column = rightStartColumn; column <= rightEndColumn; column++) {
+      row.getCell(column).alignment = { horizontal: "right", vertical: "middle", wrapText: false, shrinkToFit: true };
+    }
   }
   const signatureSpacer = sheet.addRow([]);
   signatureSpacer.height = 20;
@@ -206,14 +279,14 @@ function sharedConfigurePrint(sheet: ExcelJS.Worksheet, title: string, estimateI
   };
 }
 
-function sharedSummaryRow(sheet: ExcelJS.Worksheet, label: string, amount: number, formula: string, reference = "", bold = true, labelColumn = 2) {
+function sharedSummaryRow(sheet: ExcelJS.Worksheet, label: string, amount: number, formula: string, reference = "", bold = true, labelColumn = 2, labelAlignment: "left" | "right" = "left") {
   const values: Array<string | number | null> = [null, null, null, null, null, amount, reference];
   values[labelColumn - 1] = label;
   const row = sheet.addRow(values);
   row.height = sharedRowHeight(label, 48, 15);
   sheet.mergeCells(`${columnName(labelColumn)}${row.number}:E${row.number}`);
   row.getCell(labelColumn).font = { name: "Book Antiqua", size: 10, bold };
-  row.getCell(labelColumn).alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+  row.getCell(labelColumn).alignment = { horizontal: labelAlignment, vertical: "middle", wrapText: true };
   sharedCellFormula(sheet, row.number, 6, formula, amount);
   row.getCell(6).font = { name: "Book Antiqua", size: 10, bold };
   row.getCell(6).numFmt = "##,##,##0";
@@ -225,8 +298,8 @@ function sharedSummaryRow(sheet: ExcelJS.Worksheet, label: string, amount: numbe
 function sharedFinancialSummary(sheet: ExcelJS.Worksheet, subtotals: SharedSubtotal[], details: Record<string, unknown>, labelColumn = 2, mergeSeparator = false) {
   const separatorRow = sheet.addRow([]);
   if (mergeSeparator) sheet.mergeCells(`A${separatorRow.number}:G${separatorRow.number}`);
-  const addSummaryRow = (label: string, amount: number, formula: string, reference = "", bold = true) =>
-    sharedSummaryRow(sheet, label, amount, formula, reference, bold, labelColumn);
+  const addSummaryRow = (label: string, amount: number, formula: string, reference = "", bold = true, labelAlignment: "left" | "right" = "left") =>
+    sharedSummaryRow(sheet, label, amount, formula, reference, bold, labelColumn, labelAlignment);
   const rate = sharedNumber(details.costIndex);
   const factor = sharedNumber(details.gstModificationFactor, 1) || 1;
   const scheduled = subtotals.filter(row => row.code !== "51");
@@ -237,7 +310,7 @@ function sharedFinancialSummary(sheet: ExcelJS.Worksheet, subtotals: SharedSubto
   const totalSchedule = Math.round(scheduled.reduce((sum, item) => sum + item.amount, 0));
   const totalScheduleRow = addSummaryRow("Total of Schedule & mDSR Items:", totalSchedule, sumFormula(scheduled), "A");
   const ci = Math.round(totalSchedule * rate / 100);
-  const ciRow = rate ? addSummaryRow(`Add Cost Index @ ${rate}% on DSR & mDSR Items:`, ci, `ROUND(F${totalScheduleRow}*${rate / 100},0)`, `${rate / 100}A`, false) : undefined;
+  const ciRow = rate ? addSummaryRow(`Add Cost Index @ ${rate}% on DSR & mDSR Items:`, ci, `ROUND(F${totalScheduleRow}*${rate / 100},0)`, `${rate / 100}A`, false, "left") : undefined;
   const dsrEnhanced = totalSchedule + (ciRow ? ci : 0);
   const enhancedRow = ciRow
     ? addSummaryRow(`Subtotal of DSR and mDSR items enhanced by CI @ ${rate}%:`, dsrEnhanced, `ROUND(F${totalScheduleRow}+F${ciRow},0)`, `B = ${1 + rate / 100}`)
@@ -254,8 +327,8 @@ function sharedFinancialSummary(sheet: ExcelJS.Worksheet, subtotals: SharedSubto
   const epf = Math.round(base * epfRate);
   const esi = Math.round(base * esiRate);
   const contributionRows = [
-    addSummaryRow(`Add EPF @ ${sharedNumber(details.epf).toFixed(3)}%:`, epf, `ROUND(F${baseRow}*${epfRate},0)`, "F", false),
-    addSummaryRow(`Add ESI @ ${sharedNumber(details.esi).toFixed(3)}%:`, esi, `ROUND(F${baseRow}*${esiRate},0)`, "G", false),
+    addSummaryRow(`Add EPF @ ${sharedNumber(details.epf).toFixed(3)}%:`, epf, `ROUND(F${baseRow}*${epfRate},0)`, "F", false, "left"),
+    addSummaryRow(`Add ESI @ ${sharedNumber(details.esi).toFixed(3)}%:`, esi, `ROUND(F${baseRow}*${esiRate},0)`, "G", false, "left"),
   ];
   let contingency = 0;
   let contingencyFormula = "";
@@ -275,7 +348,7 @@ function sharedFinancialSummary(sheet: ExcelJS.Worksheet, subtotals: SharedSubto
     const label = contingencyType === "Custom (%)"
       ? `Add Contingency @ ${sharedNumber(details.customContingency)}%:`
       : `Add Contingency @ ${base <= 10000000 ? 5 : 3}%:`;
-    contributionRows.push(addSummaryRow(label, contingency, contingencyFormula, "H", false));
+    contributionRows.push(addSummaryRow(label, contingency, contingencyFormula, "H", false, "left"));
   }
   const customTaxName = sharedText(details.customTaxName).trim();
   const customTaxRate = sharedNumber(details.customTaxRate) / 100;
@@ -288,6 +361,7 @@ function sharedFinancialSummary(sheet: ExcelJS.Worksheet, subtotals: SharedSubto
       `ROUND(F${baseRow}*${customTaxRate},0)`,
       "I",
       false,
+      "left",
     ));
   }
   const grand = base + epf + esi + contingency + customTax;
@@ -299,7 +373,7 @@ function sharedFinancialSummary(sheet: ExcelJS.Worksheet, subtotals: SharedSubto
   );
   const say = Math.round(grand / 100) * 100;
   const sayRow = addSummaryRow("SAY:", say, `ROUND(F${grandRow},-2)`);
-  sheet.getCell(sayRow, 6).font = { name: "Book Antiqua", size: 14, bold: true };
+  sheet.getCell(sayRow, 6).font = { name: "Book Antiqua", size: 10, bold: true };
   return sayRow;
 }
 
@@ -314,6 +388,18 @@ function sharedSummaryAmountBorders(sheet: ExcelJS.Worksheet) {
     const labelColumn = sheet.getColumn(1).values.includes(label) ? 1 : 2;
     const row = sheet.getColumn(labelColumn).values.findIndex(value => value === label);
     if (row > 0) sheet.getCell(row, 6).border = thickBorder;
+  }
+}
+
+function alignFinancialSummaryLabelsLeft(sheet: ExcelJS.Worksheet, startRow: number, endRow: number, labelColumn = 1) {
+  const alignment: Partial<ExcelJS.Alignment> = { horizontal: "left", vertical: "middle", wrapText: true };
+  for (let row = startRow; row <= endRow; row++) {
+    const label = sheet.getCell(row, labelColumn);
+    const firstMergedPlaceholder = sheet.getCell(row, labelColumn + 1);
+    if (typeof label.value !== "string" || firstMergedPlaceholder.value != null) continue;
+    for (let column = labelColumn; column <= 5; column++) {
+      sheet.getCell(row, column).alignment = { ...alignment };
+    }
   }
 }
 
@@ -496,6 +582,11 @@ export function buildMeasurementSheetLayout(
     cell.border = { ...cell.border, bottom: { style: bottomStyle } };
   }
   sharedSignatories(worksheet, projectDetails, 12);
+  for (const [column, min, max] of [[1, 5, 12], [3, 4, 6], [4, 4, 8], [5, 4, 8], [6, 6, 12], [7, 6, 12], [8, 6, 12], [9, 6, 10], [10, 7, 12], [12, 6, 12]]) {
+    sharedAutoFitColumn(worksheet, column, min, max);
+  }
+  worksheet.getColumn(2).width = 33;
+  worksheet.getColumn(11).width = 8;
   worksheet.autoFilter = { from: "A8", to: `L${worksheet.rowCount}` };
 }
 
@@ -527,7 +618,7 @@ export function buildAbstractSheetLayout(
   worksheet.getColumn(6).width = 12.5;
   worksheet.getColumn(7).width = 9.5;
   sharedTitle(worksheet, "ABSTRACT OF COST", sharedText(projectDetails.nameOfWork), projectDetails);
-  sharedHeader(worksheet, ["Item\nNo.", "Description", "Unit", "Quantity", "Rate", "Amount", "DSR\nCode"]);
+  sharedHeader(worksheet, ["Item\nNo.", "Description", "Unit", "Quantity", "Rate (₹)", "Amount (₹)", "DSR\nCode"]);
   const subtotals: SharedSubtotal[] = [];
   const sections = new Map<string, typeof hierarchyRows>();
   for (const row of hierarchyRows) {
@@ -599,6 +690,7 @@ export function buildAbstractSheetLayout(
       itemRow.getCell(4).numFmt = "#,##0.00";
       itemRow.getCell(5).numFmt = "#,##0.00";
       itemRow.getCell(6).numFmt = indianAmountFormat;
+      if (rowRefs) rowRefs.abst[entry.itemCode] = { descRow: itemRow.number, itemRow: itemRow.number };
       total += amount;
     }
     const subtotalLabel = `SUBTOTAL FOR SH ${sectionCode}:`;
@@ -616,6 +708,7 @@ export function buildAbstractSheetLayout(
     if (rowRefs?.abst[sharedSectionKey(sectionCode)]) rowRefs.abst[sharedSectionKey(sectionCode)].subtotalRow = subtotalRow.number;
     subtotals.push({ code: sectionCode, label: sectionLabel, row: subtotalRow.number, amount: total, serial: subhead.serialNo });
   }
+  const summaryFirstRow = worksheet.rowCount + 2; // separator row precedes the financial summary
   sharedFinancialSummary(worksheet, subtotals, projectDetails, 1, true);
   const sayRow = worksheet.rowCount;
   sharedTableStyles(worksheet, sayRow, 7);
@@ -623,18 +716,28 @@ export function buildAbstractSheetLayout(
     const firstCell = worksheet.getCell(rowNumber, 1);
     const isMergedSummaryLabel = typeof firstCell.value === "string" && worksheet.getCell(rowNumber, 2).value == null;
     firstCell.alignment = isMergedSummaryLabel
-      ? { horizontal: "right", vertical: "middle", wrapText: true }
+      ? { horizontal: "left", vertical: "middle", wrapText: true }
       : { horizontal: "center", vertical: "middle", wrapText: true };
-    worksheet.getCell(rowNumber, 2).alignment = { horizontal: "justify", vertical: "middle", wrapText: true };
-    worksheet.getCell(rowNumber, 3).alignment = { horizontal: "center", vertical: "middle" };
-    worksheet.getCell(rowNumber, 4).alignment = { horizontal: "center", vertical: "middle" };
-    worksheet.getCell(rowNumber, 5).alignment = { horizontal: "right", vertical: "middle" };
+    if (!isMergedSummaryLabel) {
+      worksheet.getCell(rowNumber, 2).alignment = { horizontal: "justify", vertical: "middle", wrapText: true };
+      worksheet.getCell(rowNumber, 3).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      worksheet.getCell(rowNumber, 4).alignment = { horizontal: "center", vertical: "middle" };
+      worksheet.getCell(rowNumber, 5).alignment = { horizontal: "right", vertical: "middle" };
+    }
     worksheet.getCell(rowNumber, 6).alignment = { horizontal: "right", vertical: "middle" };
     worksheet.getCell(rowNumber, 7).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   }
   sharedUnboldGeneralSummaryRows(worksheet);
   sharedSummaryAmountBorders(worksheet);
   sharedSignatories(worksheet, projectDetails);
+  alignFinancialSummaryLabelsLeft(worksheet, summaryFirstRow, sayRow, 1);
+  for (const [column, min, max] of [[1, 6, 12], [3, 6, 12], [4, 8, 14], [5, 8, 14], [6, 10, 18], [7, 7, 14]]) {
+    sharedAutoFitColumn(worksheet, column, min, max);
+  }
+  worksheet.getColumn(2).width = 52;
+  for (let rowNumber = 8; rowNumber <= worksheet.rowCount; rowNumber++) {
+    worksheet.getCell(rowNumber, 3).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  }
 }
 
 export function buildGenAbstSheetLayout(
@@ -653,10 +756,10 @@ export function buildGenAbstSheetLayout(
     fitToWidth: 1,
     fitToHeight: 0,
     printTitlesRow: "8:8",
-    margins: { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
+    margins: { left: 1.25, right: 0.5, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
   };
   const { hierarchyRows, projectDetails } = sharedContext(estimateData);
-  worksheet.getColumn(1).width = 7.5;
+  worksheet.getColumn(1).width = 6;
   worksheet.getColumn(2).width = 52.0;
   worksheet.getColumn(3).width = 7.5;
   worksheet.getColumn(3).hidden = true;
@@ -664,9 +767,9 @@ export function buildGenAbstSheetLayout(
   worksheet.getColumn(4).hidden = true;
   worksheet.getColumn(5).width = 11.5;
   worksheet.getColumn(5).hidden = true;
-  worksheet.getColumn(6).width = 12.5;
-  worksheet.getColumn(7).width = 9.5;
-  sharedTitle(worksheet, "GENERAL ABSTRACT", sharedText(projectDetails.nameOfWork), projectDetails);
+  worksheet.getColumn(6).width = 13;
+  worksheet.getColumn(7).width = 9;
+  sharedTitle(worksheet, "GENERAL ABSTRACT", sharedText(projectDetails.nameOfWork), projectDetails, 7, true);
   sharedHeader(worksheet, ["Sl. No.", "Description of Item", "", "", "", "Amount (₹)", "Ref"]);
   worksheet.mergeCells("B8:E8");
   const sections = new Map<string, typeof hierarchyRows>();
@@ -715,6 +818,11 @@ export function buildGenAbstSheetLayout(
   sharedUnboldGeneralSummaryRows(worksheet);
   sharedSummaryAmountBorders(worksheet);
   sharedSignatories(worksheet, projectDetails);
+  sharedAutoFitColumn(worksheet, 1, 6, 8);
+  sharedAutoFitColumn(worksheet, 6, 12, 15);
+  sharedAutoFitColumn(worksheet, 7, 8, 11);
+  worksheet.getColumn(2).width = 52;
+  alignFinancialSummaryLabelsLeft(worksheet, summaryFirstRow, sayRow, 1);
 }
 
 async function downloadSharedSheet(workbook: ExcelJS.Workbook, fileBaseName: string) {
@@ -749,6 +857,271 @@ async function exportSharedSheet(
     console.error(`Could not export ${sheetName}:`, error);
     window.alert(error instanceof Error ? error.message : `Could not export ${sheetName}.`);
   }
+}
+
+/** Build the same ExcelJS layout used by the workbook export, then print that
+ * worksheet as a portrait PDF. This avoids printing the interactive React UI
+ * (controls, scroll containers, and screen-only totals) as if it were a sheet.
+ */
+export function exportEstimateWorksheetToPdf(
+  sheetName: string,
+  estimateId: string,
+  builder: (worksheet: ExcelJS.Worksheet) => void,
+) {
+  const printWindow = window.open("", "_blank", "width=1000,height=800");
+  if (!printWindow) throw new Error("The PDF print window was blocked. Allow pop-ups and try again.");
+
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet(sheetName);
+  builder(worksheet);
+
+  const visibleColumns = Array.from({ length: worksheet.columnCount }, (_, index) => ({
+    index: index + 1,
+    width: Math.max(1, worksheet.getColumn(index + 1).width || 10),
+    hidden: Boolean(worksheet.getColumn(index + 1).hidden),
+  })).filter(column => !column.hidden);
+  const columnWidths = visibleColumns.map(column => column.width);
+  const totalWidth = columnWidths.reduce((sum, width) => sum + width, 0) || 1;
+  const merges = worksheet.model.merges || [];
+  const mergeByStart = new Map<string, number>();
+  const mergedCells = new Set<string>();
+  const mergeAnchorByVisibleStart = new Map<string, string>();
+  const columnNumber = (address: string) => {
+    const letters = address.match(/^[A-Z]+/i)?.[0]?.toUpperCase() || "A";
+    return [...letters].reduce((number, letter) => number * 26 + letter.charCodeAt(0) - 64, 0);
+  };
+  const rowNumber = (address: string) => Number(address.match(/\d+/)?.[0] || 1);
+  for (const range of merges) {
+    const [start, end] = range.split(":");
+    const startRow = rowNumber(start);
+    const endRow = rowNumber(end);
+    const startColumn = columnNumber(start);
+    const endColumn = columnNumber(end);
+    const visibleMergeColumns = visibleColumns.map(column => column.index).filter(column => column >= startColumn && column <= endColumn);
+    if (!visibleMergeColumns.length) continue;
+    const visibleStartColumn = visibleMergeColumns[0];
+    const visibleStartKey = `${startRow}:${visibleStartColumn}`;
+    mergeByStart.set(visibleStartKey, visibleMergeColumns.length);
+    mergeAnchorByVisibleStart.set(visibleStartKey, start);
+    for (let row = startRow; row <= endRow; row++) {
+      for (const col of visibleMergeColumns) {
+        if (row !== startRow || col !== visibleStartColumn) mergedCells.add(`${row}:${col}`);
+      }
+    }
+  }
+  const cellText = (cell: ExcelJS.Cell) => sharedFormattedCellValue(cell);
+  const color = (argb?: string) => argb ? `#${argb.slice(-6)}` : undefined;
+  const borderStyle = (style?: ExcelJS.BorderStyle) => {
+    if (!style) return "none";
+    if (style === "hair") return "0.5px dotted #222";
+    const width = style === "double" ? "2px" : style === "medium" || style === "thick" ? "1.5px" : "1px";
+    return `${width} solid #222`;
+  };
+  const safe = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
+  const rows: string[] = [];
+  for (let rowNumber = 1; rowNumber <= worksheet.rowCount; rowNumber++) {
+    const row = worksheet.getRow(rowNumber);
+    const cells: string[] = [];
+    for (const visibleColumn of visibleColumns) {
+      const col = visibleColumn.index;
+      if (mergedCells.has(`${rowNumber}:${col}`)) continue;
+      const visibleKey = `${rowNumber}:${col}`;
+      const cellAddress = mergeAnchorByVisibleStart.get(visibleKey);
+      const cell = cellAddress ? worksheet.getCell(cellAddress) : row.getCell(col);
+      const style = cell.style || {};
+      const alignment = style.alignment || {};
+      const font = style.font || {};
+      const fill = style.fill && style.fill.type === "pattern" && style.fill.fgColor?.argb
+        ? color(style.fill.fgColor.argb) : undefined;
+      const borders = style.border || {};
+      const styles = [
+        `text-align:${alignment.horizontal === "justify" ? "justify" : alignment.horizontal || "left"}`,
+        `vertical-align:${alignment.vertical === "top" ? "top" : "middle"}`,
+        `font-family:${safe(font.name || "Book Antiqua")}`,
+        `font-size:${font.size || 10}pt`,
+        `font-weight:${font.bold ? "bold" : "normal"}`,
+        font.italic ? "font-style:italic" : "",
+        `white-space:${alignment.wrapText ? "pre-wrap" : "nowrap"}`,
+        alignment.wrapText ? "overflow-wrap:anywhere" : "",
+        fill ? `background:${fill}` : "",
+        color(font.color?.argb) ? `color:${color(font.color?.argb)}` : "",
+        `border-top:${borderStyle(borders.top?.style)}`,
+        `border-right:${borderStyle(borders.right?.style)}`,
+        `border-bottom:${borderStyle(borders.bottom?.style)}`,
+        `border-left:${borderStyle(borders.left?.style)}`,
+        alignment.shrinkToFit ? "font-stretch:condensed" : "",
+      ].filter(Boolean).join(";");
+      const colSpan = mergeByStart.get(visibleKey);
+      const text = safe(cellText(cell)).replace(/\r?\n/g, "<br>");
+      cells.push(`<td${colSpan ? ` colspan="${colSpan}"` : ""} style="${styles}">${text || "&nbsp;"}</td>`);
+    }
+    const height = row.height ? ` style="height:${row.height}pt"` : "";
+    rows.push(`<tr${height}>${cells.join("")}</tr>`);
+  }
+
+  const headerRowNumber = worksheet.pageSetup.printTitlesRow?.split(":")[0];
+  const headerNumber = Number(headerRowNumber) || 0;
+  const preamble = headerNumber ? rows.slice(0, headerNumber - 1).join("") : "";
+  const head = headerNumber ? rows[headerNumber - 1] || "" : "";
+  const body = rows.slice(headerNumber).join("");
+  const margins = worksheet.pageSetup.margins || { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75 };
+  const marginIn = (value: number | undefined, fallback: number) => `${Math.max(0, value ?? fallback)}in`;
+  const tableColumns = columnWidths.map(width => `<col style="width:${(width / totalWidth * 100).toFixed(4)}%">`).join("");
+  const title = safe(sheetName);
+  const safeFilePart = (value: string) => value.trim().replace(/[<>:"\\|?*\x00-\x1F]/g, "").replace(/\//g, "").replace(/\s+/g, "_");
+  const suggestedFilename = safe(`${safeFilePart(sheetName)}_${safeFilePart(estimateId || "Estimate")}`);
+  const id = safe(estimateId || "N/A");
+  printWindow.document.open();
+  printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${suggestedFilename}</title>
+    <style>
+      @page { size: A4 portrait; margin: ${marginIn(margins.top, .75)} ${marginIn(margins.right, .5)} ${marginIn(margins.bottom, .75)} ${marginIn(margins.left, .5)};
+        @bottom-left { content: "${title}"; font: 8pt "Book Antiqua", serif; }
+        @bottom-center { content: "Page " counter(page) " of " counter(pages); font: 8pt "Book Antiqua", serif; }
+        @bottom-right { content: "${id}"; font: 8pt "Book Antiqua", serif; }
+      }
+      * { box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      html,body { margin:0; padding:0; color:#111; background:#fff; font-family:"Book Antiqua",serif; }
+      table { width:100%; table-layout:fixed; border-collapse:collapse; margin:0; }
+      colgroup { display:table-column-group; }
+      td { padding:2pt 3pt; }
+      thead { display:table-header-group; }
+      tr { break-inside:avoid; page-break-inside:avoid; }
+      tbody { display:table-row-group; }
+    </style></head><body>${preamble ? `<table><colgroup>${tableColumns}</colgroup><tbody>${preamble}</tbody></table>` : ""}<table><colgroup>${tableColumns}</colgroup>${head ? `<thead>${head}</thead>` : ""}<tbody>${body}</tbody></table>
+    <script>window.addEventListener('load',()=>{window.focus();setTimeout(()=>window.print(),200)});window.addEventListener('afterprint',()=>window.close());</script>
+    </body></html>`);
+  printWindow.document.close();
+}
+
+/** Print all sheets from an ExcelJS workbook as one PDF. The Justfn exports use
+ * the same worksheet builders as their Excel counterparts, including per-sheet
+ * orientation, footer, print margins, formulas, merges, and formatting. */
+export function openEstimatePdfWindow() {
+  const printWindow = window.open("", "_blank", "width=1000,height=800");
+  if (printWindow) {
+    printWindow.document.open();
+    printWindow.document.write("<!doctype html><html><head><title>Preparing PDF</title></head><body>Preparing PDF…</body></html>");
+    printWindow.document.close();
+  }
+  return printWindow;
+}
+
+export function exportEstimateWorkbookToPdf(workbook: ExcelJS.Workbook, estimateId: string, fileBaseName: string, openedWindow?: Window | null) {
+  const printWindow = openedWindow ?? window.open("", "_blank", "width=1000,height=800");
+  if (!printWindow) throw new Error("The PDF print window was blocked. Allow pop-ups and try again.");
+
+  const safe = (value: unknown) => String(value ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
+  const colNumber = (address: string) => [...(address.match(/^[A-Z]+/i)?.[0]?.toUpperCase() || "A")]
+    .reduce((number, letter) => number * 26 + letter.charCodeAt(0) - 64, 0);
+  const rowNumber = (address: string) => Number(address.match(/\d+/)?.[0] || 1);
+  const borderCss = (side: ExcelJS.Border | undefined) => {
+    if (!side?.style) return "none";
+    const width = side.style === "hair" ? "0.5px" : side.style === "medium" || side.style === "thick" ? "1.5px" : "1px";
+    const line = side.style === "hair" ? "dotted" : "solid";
+    return `${width} ${line} #111`;
+  };
+  const sheetsHtml = workbook.worksheets.map((worksheet, sheetIndex) => {
+    const columns = Array.from({ length: worksheet.columnCount }, (_, index) => ({
+      index: index + 1,
+      width: Math.max(1, worksheet.getColumn(index + 1).width || 10),
+      hidden: Boolean(worksheet.getColumn(index + 1).hidden),
+    })).filter(column => !column.hidden);
+    const totalWidth = columns.reduce((sum, column) => sum + column.width, 0) || 1;
+    const merges = worksheet.model.merges || [];
+    const mergeByStart = new Map<string, { colSpan: number; rowSpan: number }>();
+    const mergedCells = new Set<string>();
+    const anchorByStart = new Map<string, string>();
+    for (const range of merges) {
+      const [start, end] = range.split(":");
+      const startRow = rowNumber(start), endRow = rowNumber(end);
+      const startCol = colNumber(start), endCol = colNumber(end);
+      const visible = columns.filter(column => column.index >= startCol && column.index <= endCol);
+      if (!visible.length) continue;
+      const visibleStart = visible[0].index;
+      const key = `${startRow}:${visibleStart}`;
+      mergeByStart.set(key, { colSpan: visible.length, rowSpan: endRow - startRow + 1 });
+      anchorByStart.set(key, start);
+      for (let row = startRow; row <= endRow; row++) {
+        for (const column of visible) if (row !== startRow || column.index !== visibleStart) mergedCells.add(`${row}:${column.index}`);
+      }
+    }
+    const rows: string[] = [];
+    for (let rowIndex = 1; rowIndex <= worksheet.rowCount; rowIndex++) {
+      const row = worksheet.getRow(rowIndex);
+      const cells = columns.flatMap(column => {
+        const key = `${rowIndex}:${column.index}`;
+        if (mergedCells.has(key)) return [];
+        const cell = worksheet.getCell(anchorByStart.get(key) || row.getCell(column.index).address);
+        const alignment = cell.alignment || {};
+        const font = cell.font || {};
+        const fill = cell.fill?.type === "pattern" && cell.fill.fgColor?.argb
+          ? `#${cell.fill.fgColor.argb.slice(-6)}` : "transparent";
+        const argb = font.color?.argb;
+        const color = argb ? `#${argb.slice(-6)}` : "#111";
+        const border = cell.border || {};
+        const styles = [
+          `text-align:${alignment.horizontal === "justify" ? "justify" : alignment.horizontal || "left"}`,
+          `vertical-align:${alignment.vertical === "top" ? "top" : "middle"}`,
+          `font-family:${safe(font.name || "Book Antiqua")}`,
+          `font-size:${font.size || 10}pt`,
+          `font-weight:${font.bold ? "bold" : "normal"}`,
+          font.italic ? "font-style:italic" : "",
+          `color:${color}`,
+          `background:${fill}`,
+          `white-space:${alignment.wrapText ? "pre-wrap" : "nowrap"}`,
+          alignment.wrapText ? "overflow-wrap:anywhere" : "",
+          `border-top:${borderCss(border.top)}`,
+          `border-right:${borderCss(border.right)}`,
+          `border-bottom:${borderCss(border.bottom)}`,
+          `border-left:${borderCss(border.left)}`,
+        ].filter(Boolean).join(";");
+        const span = mergeByStart.get(key);
+        const value = safe(sharedFormattedCellValue(cell)).replace(/\r?\n/g, "<br>");
+        const spanAttributes = span
+          ? `${span.colSpan > 1 ? ` colspan="${span.colSpan}"` : ""}${span.rowSpan > 1 ? ` rowspan="${span.rowSpan}"` : ""}`
+          : "";
+        return [`<td${spanAttributes} style="${styles}">${value || "&nbsp;"}</td>`];
+      }).join("");
+      rows.push(`<tr${row.height ? ` style="height:${row.height}pt"` : ""}>${cells}</tr>`);
+    }
+    const colgroup = columns.map(column => `<col style="width:${(column.width / totalWidth * 100).toFixed(4)}%">`).join("");
+    const titleRows = String(worksheet.pageSetup.printTitlesRow || "").match(/\$?(\d+):\$?(\d+)/);
+    const titleStart = titleRows ? Number(titleRows[1]) : 0;
+    const titleEnd = titleRows ? Number(titleRows[2]) : 0;
+    const tableHtml = titleStart > 0 && titleEnd >= titleStart
+      ? `<table><colgroup>${colgroup}</colgroup><tbody>${rows.slice(0, titleStart - 1).join("")}</tbody></table><table><colgroup>${colgroup}</colgroup><thead>${rows.slice(titleStart - 1, titleEnd).join("")}</thead><tbody>${rows.slice(titleEnd).join("")}</tbody></table>`
+      : `<table><colgroup>${colgroup}</colgroup><tbody>${rows.join("")}</tbody></table>`;
+    const oddFooter = String(worksheet.headerFooter?.oddFooter || worksheet.headerFooter?.evenFooter || "");
+    const footerLeft = oddFooter.match(/&L([\s\S]*?)(?=&[CR]|$)/i)?.[1]
+      ?.replace(/&"[^"]*"/g, "").replace(/&\d+/g, "").replace(/&[BIUSXY]/gi, "").trim() || worksheet.name;
+    const pageSetup = worksheet.pageSetup;
+    const orientation = pageSetup.orientation === "landscape" ? "landscape" : "portrait";
+    const margins = pageSetup.margins || { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75 };
+    const toInches = (value: number | undefined, fallback: number) => `${Math.max(0, Number.isFinite(value) ? value as number : fallback)}in`;
+    const pageRule = `@page sheetpage${sheetIndex} { size: A4 ${orientation}; margin: ${toInches(margins.top, 0.75)} ${toInches(margins.right, 0.5)} ${toInches(margins.bottom, 0.75)} ${toInches(margins.left, 0.5)}; @bottom-left { content: "${safe(footerLeft)}"; font: 8pt "Book Antiqua",serif; } @bottom-center { content: "Page " counter(page) " of " counter(pages); font: 8pt "Book Antiqua",serif; } @bottom-right { content: "${safe(estimateId || "N/A")}"; font: 8pt "Book Antiqua",serif; } }`;
+    return { html: `<section class="sheet sheet-page${sheetIndex}${sheetIndex ? " sheet-break" : ""}">${tableHtml}</section>`, pageRule };
+  });
+  const sheetDocuments = sheetsHtml;
+  const filename = `${String(fileBaseName || "Estimate").trim().replace(/[^\w-]+/g, "_")}_${String(estimateId || "Estimate").trim().replace(/[^\w-]+/g, "_")}`;
+  printWindow.document.open();
+  printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${safe(filename)}</title>
+    <style>
+      ${sheetDocuments.map(sheet => sheet.pageRule).join("\n")}
+      * { box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      html,body { margin:0; padding:0; color:#111; background:#fff; font-family:"Book Antiqua",serif; }
+      .sheet { width:100%; page:sheetpage0; }
+      ${sheetDocuments.map((_, index) => `.sheet-page${index} { page:sheetpage${index}; }`).join("\n")}
+      .sheet-break { break-before:page; page-break-before:always; }
+      table { width:100%; table-layout:fixed; border-collapse:collapse; margin:0; }
+      td { padding:2pt 3pt; }
+      thead { display:table-header-group; }
+      tr { break-inside:avoid; page-break-inside:avoid; }
+    </style></head><body>${sheetDocuments.map(sheet => sheet.html).join("")}
+    <script>window.addEventListener('load',()=>{window.focus();setTimeout(()=>window.print(),200)});window.addEventListener('afterprint',()=>window.close());</script>
+    </body></html>`);
+  printWindow.document.close();
 }
 
 const xml = (value: unknown) => Array.from(String(value ?? ""))
@@ -1781,8 +2154,182 @@ export async function exportGenAbstToExcel(
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+type RateAnalysisExportOptions = {
+  calculationMethod?: string;
+  customCharges?: Array<{ name?: string; rate?: number | string }>;
+  excludeAMarkedItems?: boolean;
+};
+
+type ExportMarkRows = Map<string, number[]>;
+
+function exportMarkExpression(markRows: ExportMarkRows, mark: string, beforeRow: number) {
+  const refs = (markRows.get(mark.toUpperCase()) || []).filter(row => row < beforeRow);
+  if (!refs.length) return undefined;
+  return refs.length === 1 ? `F${refs[0]}` : `SUM(${refs.map(row => `F${row}`).join(",")})`;
+}
+
+function exportAlgebraExpression(description: string, marks: ExportMarkRows, rowNumber: number, base?: string) {
+  const expression = description.split("=").pop()?.trim().toUpperCase() || "";
+  let match = /^([A-Z])\s*\/\s*(\d+(?:\.\d+)?)$/.exec(expression);
+  if (match) {
+    const ref = exportMarkExpression(marks, match[1], rowNumber);
+    if (ref) return `(${ref}/${match[2]})`;
+  }
+  match = /^([A-Z])\s*[X*]\s*(0\.\d+|1\.\d+|\d+(?:\.\d+)?)$/.exec(expression);
+  if (match) {
+    const ref = exportMarkExpression(marks, match[1], rowNumber);
+    if (ref) return `(${ref}*${match[2]})`;
+  }
+  match = /^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s+OF\s+([A-Z])$/.exec(expression);
+  if (match && Number(match[2]) !== 0) {
+    const ref = exportMarkExpression(marks, match[3], rowNumber);
+    if (ref) return `((${ref}*${match[1]})/${match[2]})`;
+  }
+  const terms = [...expression.matchAll(/([+-]?)\s*(\d+(?:\.\d+)?)\s*(?:%|PER\s*CENT)\s*(?:OF|ON)\s+["']?([A-Z])\b/gi)]
+    .flatMap(term => {
+      const ref = exportMarkExpression(marks, term[3], rowNumber);
+      return ref ? [`${term[1] === "-" ? "-" : "+"}(${ref}*${Number(term[2]) / 100})`] : [];
+    });
+  if (terms.length) return `(${terms.join("")})`;
+  if (/\bEXTRA\b/i.test(description)) {
+    const percent = description.match(/@\s*(\d+(?:\.\d+)?)\s*%/i);
+    if (percent && base) return `(${base}*${Number(percent[1]) / 100})`;
+  }
+  return undefined;
+}
+
+/** Adds live formulas to the financial rows in the rendered Rate Analysis tables. */
+function applyRateAnalysisFormulaRows(
+  rows: Array<{ cells: Array<{ text: string; formula?: string; result?: number }>; rowNumber: number }>,
+  options: RateAnalysisExportOptions = {},
+) {
+  const numeric = (value: string) => {
+    const parsed = Number(String(value || "").replace(/[₹,\s]/g, ""));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const totalRowsByMark = new Map<string, number>();
+  const markRows: ExportMarkRows = new Map();
+  let componentStartRow: number | undefined;
+  let latestTotalRow: number | undefined;
+  let latestDerivedRow: number | undefined;
+  let costOfOneRow: number | undefined;
+  let customChargeIndex = 0;
+  let amountColumn = 5;
+  const sumRange = (start: number, end: number) => start <= end ? `SUM(F${start}:F${end})` : "0";
+
+  for (const entry of rows) {
+    const cells = entry.cells;
+    if (cells.some(cell => /^amount\s*\(₹\)$/i.test(cell.text.trim()))) {
+      const headerIndex = rows.indexOf(entry);
+      const amountHeader = cells.findIndex(cell => /^amount\s*\(₹\)$/i.test(cell.text.trim()));
+      if (amountHeader >= 0) amountColumn = amountHeader;
+      const next = rows[headerIndex + 1];
+      if (next) componentStartRow = next.rowNumber;
+      totalRowsByMark.clear();
+      markRows.clear();
+      latestTotalRow = undefined;
+      latestDerivedRow = undefined;
+      costOfOneRow = undefined;
+      customChargeIndex = 0;
+      continue;
+    }
+    if (componentStartRow === undefined || cells.length <= amountColumn) continue;
+    const description = String(cells[1]?.text || "").trim();
+    const upper = description.toUpperCase();
+    const amountCell = cells[amountColumn];
+    const result = numeric(amountCell.text);
+    const mark = String(cells[6]?.text || "").trim().toUpperCase();
+    const totalMatch = description.match(/^TOTAL\s*["'“”]?([WXYZ])["'“”]?\s*$/i);
+    const isTotalRow = Boolean(totalMatch) || /^TOTAL\b/i.test(description);
+    if (isTotalRow) {
+      const previousTotal = latestTotalRow;
+      amountCell.formula = previousTotal
+        ? `ROUND(F${previousTotal}+${sumRange(previousTotal + 1, entry.rowNumber - 1)},2)`
+        : `ROUND(${sumRange(componentStartRow, entry.rowNumber - 1)},2)`;
+      amountCell.result = result;
+      const totalMark = totalMatch?.[1]?.toUpperCase() || (/^[WXYZ]$/.test(mark) ? mark : "");
+      const resolvedMark = totalMark || (/^[A-Z]$/.test(mark) ? mark : "");
+      if (resolvedMark) {
+        totalRowsByMark.set(resolvedMark, entry.rowNumber);
+        markRows.set(resolvedMark, [entry.rowNumber]);
+      }
+      latestTotalRow = entry.rowNumber;
+      latestDerivedRow = undefined;
+      continue;
+    }
+
+    if (/^(?:ADD|LESS|DEDUCT)\b/i.test(description)) {
+      // Accept both legacy DAR labels (on "W-A") and the NSR modal's
+      // standardized labels (on (W - A)).
+      const refMatch = description.match(/\b(?:on|of)\s*["'“‘(]*([A-Z])(?:\s*-\s*A)?["'”’)]*/i);
+      const refMark = refMatch?.[1]?.toUpperCase();
+      const customMode = options.calculationMethod === "Custom charges";
+      const refRow = !customMode && refMark ? totalRowsByMark.get(refMark) : latestTotalRow;
+      let baseExpression: string | undefined;
+      if (refMark && !customMode) baseExpression = exportMarkExpression(markRows, refMark, entry.rowNumber) || (refRow ? `F${refRow}` : undefined);
+      else if (refRow) baseExpression = `F${refRow}${refRow + 1 <= entry.rowNumber - 1 ? `+${sumRange(refRow + 1, entry.rowNumber - 1)}` : ""}`;
+      if (!baseExpression && latestTotalRow) baseExpression = `F${latestTotalRow}${latestTotalRow + 1 <= entry.rowNumber - 1 ? `+${sumRange(latestTotalRow + 1, entry.rowNumber - 1)}` : ""}`;
+      if (baseExpression && componentStartRow !== undefined && (/\b[WXYZ]\s*-\s*A\b/i.test(description) || (customMode && options.excludeAMarkedItems))) {
+        const end = entry.rowNumber - 1;
+        const start = componentStartRow;
+        baseExpression = `MAX(0,${baseExpression}-SUMIF(G${start}:G${end},"A",F${start}:F${end}))`;
+      }
+      const multiplier = description.match(/multiplying\s+factor\s+([\d.]+)/i);
+      const percent = description.match(/([\d.]+)\s*%/);
+      const customRate = customMode ? Number(options.customCharges?.[customChargeIndex]?.rate) : NaN;
+      const factor = Number.isFinite(customRate)
+        ? customRate / 100
+        : multiplier ? Number(multiplier[1]) : percent ? Number(percent[1]) / 100 : NaN;
+      if (baseExpression && Number.isFinite(factor)) {
+        const sign = /^(?:LESS|DEDUCT)\b/i.test(description) ? "-" : "";
+        amountCell.formula = `ROUND(${sign}(${baseExpression})*${factor},2)`;
+        amountCell.result = result;
+      }
+      if (/^[A-Z]$/.test(mark)) markRows.set(mark, [...(markRows.get(mark) || []), entry.rowNumber]);
+      if (customMode) customChargeIndex++;
+      continue;
+    }
+
+    const costMatch = description.match(/^COST\s+(?:OF|FOR)\s+([\d.]+)/i);
+    if (costMatch && latestTotalRow) {
+      const quantity = Number(costMatch[1]);
+      const detailStartRow = componentStartRow ?? rows[0]?.rowNumber ?? entry.rowNumber;
+      const detailHeader = rows.find(row => row.rowNumber >= detailStartRow && /DETAILS\s+OF\s+COST\s+(?:FOR|OF)\s+[\d.]+/i.test(String(row.cells[1]?.text || "")));
+      const baseQuantity = Number(String(detailHeader?.cells[1]?.text || "").match(/DETAILS\s+OF\s+COST\s+(?:FOR|OF)\s+([\d.]+)/i)?.[1] || 1) || 1;
+      const costSourceRow = latestDerivedRow ?? latestTotalRow;
+      const costBase = latestDerivedRow
+        ? `F${costSourceRow}`
+        : `F${costSourceRow}${costSourceRow + 1 <= entry.rowNumber - 1 ? `+${sumRange(costSourceRow + 1, entry.rowNumber - 1)}` : ""}`;
+      amountCell.formula = `ROUND((${costBase})*${quantity / baseQuantity},2)`;
+      amountCell.result = result;
+      if (Math.abs(quantity - 1) < 1e-9) costOfOneRow = entry.rowNumber;
+      continue;
+    }
+
+    if (/^SAY\b/i.test(description)) {
+      const finalBase = costOfOneRow ? `F${costOfOneRow}` : latestDerivedRow ? `F${latestDerivedRow}` : latestTotalRow ? `ROUND(F${latestTotalRow},2)` : undefined;
+      if (finalBase) {
+        amountCell.formula = `MROUND(${finalBase},0.05)`;
+        amountCell.result = result;
+      }
+      continue;
+    }
+
+    const runningBase = latestTotalRow
+      ? `F${latestTotalRow}${latestTotalRow + 1 <= entry.rowNumber - 1 ? `+${sumRange(latestTotalRow + 1, entry.rowNumber - 1)}` : ""}`
+      : componentStartRow !== undefined ? sumRange(componentStartRow, entry.rowNumber - 1) : undefined;
+    const algebra = exportAlgebraExpression(description, markRows, entry.rowNumber, runningBase);
+    if (algebra) {
+      amountCell.formula = `ROUND(${algebra},2)`;
+      amountCell.result = result;
+      latestDerivedRow = entry.rowNumber;
+    }
+    if (/^[A-Z]$/.test(mark)) markRows.set(mark, [...(markRows.get(mark) || []), entry.rowNumber]);
+  }
+}
+
 /** Exports the rendered table(s) in a component to a formatted .xlsx workbook. */
-export function exportTableToExcel(root: HTMLElement | null, title: string, fileBaseName: string) {
+export function exportTableToExcel(root: HTMLElement | null, title: string, fileBaseName: string, rateAnalysisOptions: RateAnalysisExportOptions = {}) {
   if (!root) {
     window.alert("The table is not ready to export yet.");
     return;
@@ -1793,12 +2340,27 @@ export function exportTableToExcel(root: HTMLElement | null, title: string, file
     return;
   }
 
-  type SheetCell = { text: string; style: number; span?: number };
+  type SheetCell = { text: string; style: number; span?: number; formula?: string; result?: number };
   const sheetRows: SheetCell[][] = [[{ text: title, style: 1 }]];
   const sheetMerges: string[] = [];
   let headerLabels: string[] = [];
+  const marketSayRows = new Map<string, number>();
+  const pendingMarketSubAnalysisLinks: Array<{ cells: SheetCell[]; rowNumber: number; contextKey: string }> = [];
   for (const [tableIndex, table] of tables.entries()) {
     if (tableIndex > 0) sheetRows.push([]);
+    const exportCard = table.closest<HTMLElement>("[data-export-title]");
+    if (exportCard) {
+      const contextRows = [
+        exportCard.getAttribute("data-export-title")?.trim(),
+        exportCard.getAttribute("data-export-description")?.trim(),
+      ].filter((value): value is string => Boolean(value));
+      for (const value of contextRows) {
+        sheetRows.push([{ text: value, style: 3 }, ...Array.from({ length: 6 }, () => ({ text: "", style: 3 }))]);
+        const contextRowNumber = sheetRows.length;
+        sheetMerges.push(`<mergeCell ref="A${contextRowNumber}:G${contextRowNumber}"/>`);
+      }
+    }
+    const tableOutputRows: Array<{ cells: SheetCell[]; rowNumber: number }> = [];
     const sourceRows = Array.from(table.querySelectorAll("tr"));
     const headerRow = sourceRows.find(row => row.closest("thead")) || sourceRows[0];
     const excluded = new Set<number>();
@@ -1830,8 +2392,41 @@ export function exportTableToExcel(root: HTMLElement | null, title: string, file
       if (mapped.some(cell => cell.text)) {
         sheetRows.push(mapped);
         const sheetRowNumber = sheetRows.length;
+        tableOutputRows.push({ cells: mapped, rowNumber: sheetRowNumber });
         pendingMerges.forEach(({ start, end }) => sheetMerges.push(`<mergeCell ref="${columnName(start)}${sheetRowNumber}:${columnName(end)}${sheetRowNumber}"/>`));
       }
+    }
+    if (/^RATE ANALYSIS/i.test(title)) applyRateAnalysisFormulaRows(tableOutputRows, rateAnalysisOptions);
+    if (/^RATE ANALYSIS\s*\(MARKET\)/i.test(title) && exportCard) {
+      const context = exportCard.getAttribute("data-export-context") === "ns" ? "ns" : "schedule";
+      const itemCode = exportCard.getAttribute("data-export-title")?.match(/\[DSR\s+No\.\s*([^\]]+)\]/i)?.[1]?.trim();
+      if (itemCode) {
+        const sayRow = tableOutputRows.find(row => /^SAY\b/i.test(String(row.cells[1]?.text || "").trim()));
+        if (sayRow) marketSayRows.set(`${context}:${itemCode}`, sayRow.rowNumber);
+      }
+      for (const row of tableOutputRows) {
+        const componentCode = String(row.cells[0]?.text || "").trim();
+        const description = String(row.cells[1]?.text || "").trim();
+        if (itemCode && /^\d+(?:\.\d+)+$/.test(componentCode) && /^RATE\s+AS\s+PER\s+ITEM\b/i.test(description)) {
+          pendingMarketSubAnalysisLinks.push({ cells: row.cells, rowNumber: row.rowNumber, contextKey: `${context}:${componentCode}` });
+        }
+      }
+    }
+  }
+
+  for (const link of pendingMarketSubAnalysisLinks) {
+    const sayRow = marketSayRows.get(link.contextKey);
+    if (!sayRow) continue;
+    const rateCell = link.cells[4];
+    if (!rateCell) continue;
+    const parsedRate = Number(String(link.cells[4]?.text || "0").replace(/[₹,\s]/g, ""));
+    const fallback = Number.isFinite(parsedRate) ? parsedRate : 0;
+    rateCell.formula = `'${title}'!F${sayRow}`;
+    rateCell.result = fallback;
+    if (link.cells[5]) {
+      link.cells[5].formula = `ROUND(D${link.rowNumber}*E${link.rowNumber},2)`;
+      const parsedQuantity = Number(String(link.cells[3]?.text || "0").replace(/[₹,\s]/g, ""));
+      link.cells[5].result = (Number.isFinite(parsedQuantity) ? parsedQuantity : 0) * fallback;
     }
   }
 
@@ -1842,6 +2437,10 @@ export function exportTableToExcel(root: HTMLElement | null, title: string, file
     const cells = row.map(cell => {
       const ref = `${columnName(column)}${rowIndex + 1}`;
       column++;
+      if (cell.formula) {
+        const result = Number.isFinite(cell.result) ? cell.result : 0;
+        return `<c r="${ref}" s="${cell.style}"><f>${xml(cell.formula)}</f><v>${result}</v></c>`;
+      }
       return `<c r="${ref}" t="inlineStr" s="${cell.style}"><is><t xml:space="preserve">${xml(cell.text)}</t></is></c>`;
     }).join("");
     return `<row r="${rowIndex + 1}"${rowIndex === 0 ? ' ht="28" customHeight="1"' : ""}>${cells}</row>`;

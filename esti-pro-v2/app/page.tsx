@@ -16,9 +16,14 @@ import RateAnalysisMarket from "./components/RateAnalysisMarket";
 import JustificationStatement from "./components/JustificationStatement";
 import JustificationSummary, { type JustificationSummaryInputs } from "./components/JustificationSummary";
 import ItemsForJustification from "./components/ItemsForJustification";
+import { useTheme } from "./components/ThemeProvider";
 import { PageToolsProvider } from "./components/PageToolsContext";
 import { DEFAULT_PROJECT_DOCUMENT_SETTINGS } from "./utils/projectDocumentSettings";
 import { exportMasterEstimateToExcel } from "./utils/exportMasterEstimateToExcel";
+import { exportMasterEstimateToPdf } from "./utils/exportMasterEstimateToPdf";
+import { exportMasterJustfnToExcel } from "./utils/exportJustfnToExcel";
+import { openEstimatePdfWindow } from "./utils/exportTableToExcel";
+import { calculateAbstractTotals } from "./utils/abstractTotals";
 
 const DEFAULT_PROJECT_DETAILS = { 
   estimateId: "EST-2026-001", 
@@ -37,6 +42,7 @@ const DEFAULT_PROJECT_DETAILS = {
   esi: "0.8125",
   customTaxName: "",
   customTaxRate: "",
+  estimateSnapshot: undefined as { locked: boolean; updatedAt: string; totals: Record<string, number> } | undefined,
   timeLimitMonths: "",
   ...DEFAULT_PROJECT_DOCUMENT_SETTINGS,
   calcOrder: ['costIndex', 'gst', 'contingency', 'epfEsi', 'customTax']
@@ -80,10 +86,11 @@ function analysisMark(row: Record<string, any>): string {
 }
 
 export default function App() {
+  const { theme: themePreference, resolvedTheme: theme, setTheme } = useTheme();
   const [activeTab, setActiveTab] = useState("home"); 
   const [estimateSubTab, setEstimateSubTab] = useState("measurement"); 
+  const [justificationSubTab, setJustificationSubTab] = useState("itemsforjustification");
   
-  const [theme, setTheme] = useState("dark"); 
   const [projectDetails, setProjectDetails] = useState(DEFAULT_PROJECT_DETAILS);
   const [activeProjectDbId, setActiveProjectDbId] = useState("");
   const [documentSettingsProjectId, setDocumentSettingsProjectId] = useState("");
@@ -137,6 +144,7 @@ export default function App() {
     rateCalculationMethod,
     activeTab,
     estimateSubTab,
+    justificationSubTab,
   });
 
   const applySessionPayload = (sessionId: string, session: any) => {
@@ -164,6 +172,11 @@ export default function App() {
     setRateCalculationMethod(typeof session?.rateCalculationMethod === "string" ? session.rateCalculationMethod : "Conventional DSR");
     setDbCheckedItems(Array.isArray(session?.selectedItems) ? session.selectedItems.map((item: any) => String(item?.code ?? item)).filter(Boolean) : []);
     setEstimateSubTab(session?.estimateSubTab || "measurement");
+    const savedJustificationSubTab = String(session?.justificationSubTab || "");
+    const justificationTabs = ["itemsforjustification", "radsr", "ratelist", "ramarket", "juststatement", "justsummary"];
+    setJustificationSubTab(justificationTabs.includes(savedJustificationSubTab)
+      ? savedJustificationSubTab
+      : (justificationTabs.includes(String(session?.activeTab)) ? String(session.activeTab) : "itemsforjustification"));
     setSessionReady(true);
   };
 
@@ -186,7 +199,7 @@ export default function App() {
       projectDetails: DEFAULT_PROJECT_DETAILS,
       estimateRows: [], marketRates: {}, selectedItems: [], customItems: [], rateAnalyses: {}, justificationItemCodes: [], justificationThreshold: 90,
       justificationSummaryInputs: { nitNumber: "28/EE/GCD/2026-27", lowestContractor: "M/s. A. B. Construction", contractorTenderedAmount: "2799711" },
-      rateCalculationMethod: "Conventional DSR", activeTab: "home", estimateSubTab: "measurement",
+      rateCalculationMethod: "Conventional DSR", activeTab: "home", estimateSubTab: "measurement", justificationSubTab: "itemsforjustification",
     };
     try {
       const response = await fetch("/api/project-sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "create-temp", session: initial }) });
@@ -322,7 +335,7 @@ export default function App() {
       }
     }, 650);
     return () => window.clearTimeout(timeout);
-  }, [activeProjectDbId, sessionReady, documentSettingsProjectId, projectDetails, estimateRows, marketRates, dbCheckedItems, projectCustomItems, projectRateAnalyses, justificationItemCodes, justificationThreshold, justificationSummaryInputs, rateCalculationMethod, activeTab, estimateSubTab]);
+  }, [activeProjectDbId, sessionReady, documentSettingsProjectId, projectDetails, estimateRows, marketRates, dbCheckedItems, projectCustomItems, projectRateAnalyses, justificationItemCodes, justificationThreshold, justificationSummaryInputs, rateCalculationMethod, activeTab, estimateSubTab, justificationSubTab]);
 
   useEffect(() => {
     if (!activeProjectDbId || !sessionReady || documentSettingsProjectId !== activeProjectDbId) return;
@@ -332,7 +345,7 @@ export default function App() {
     };
     window.addEventListener("pagehide", flushOnExit);
     return () => window.removeEventListener("pagehide", flushOnExit);
-  }, [activeProjectDbId, sessionReady, documentSettingsProjectId, projectDetails, estimateRows, marketRates, dbCheckedItems, projectCustomItems, projectRateAnalyses, justificationItemCodes, justificationThreshold, justificationSummaryInputs, rateCalculationMethod, activeTab, estimateSubTab]);
+  }, [activeProjectDbId, sessionReady, documentSettingsProjectId, projectDetails, estimateRows, marketRates, dbCheckedItems, projectCustomItems, projectRateAnalyses, justificationItemCodes, justificationThreshold, justificationSummaryInputs, rateCalculationMethod, activeTab, estimateSubTab, justificationSubTab]);
 
   const persistProjectCustomItem = async (item: any) => {
     const projectId = String(activeProjectDbId || "").trim();
@@ -533,6 +546,7 @@ export default function App() {
         rateCalculationMethod: typeof saved.rateCalculationMethod === "string" ? saved.rateCalculationMethod : "Conventional DSR",
         activeTab: typeof saved.activeTab === "string" ? saved.activeTab : "home",
         estimateSubTab: typeof saved.estimateSubTab === "string" ? saved.estimateSubTab : "measurement",
+        justificationSubTab: typeof saved.justificationSubTab === "string" ? saved.justificationSubTab : (typeof saved.activeTab === "string" && ["itemsforjustification", "radsr", "ratelist", "ramarket", "juststatement", "justsummary"].includes(saved.activeTab) ? saved.activeTab : "itemsforjustification"),
       };
       const response = await fetch("/api/project-sessions", {
         method: "POST",
@@ -595,6 +609,7 @@ export default function App() {
       activeProjectDbId,
       activeTab,
       estimateSubTab,
+      justificationSubTab,
     }, null, 2);
     const filePickerWindow = window as Window & {
       showSaveFilePicker?: (options: {
@@ -673,25 +688,39 @@ export default function App() {
     setEstimateRows(prev => [...prev, ...newRows]);
   };
 
+    const normalizeArCode = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase();
+
     const handleViewAR = (item: any, isBack = false) => {
     if (!item) { setSelectedItem(null); setArHistory([]); return; }
-    if (!isBack && selectedItem && selectedItem.code !== item.code) {
+    if (!isBack && selectedItem && normalizeArCode(selectedItem.code) !== normalizeArCode(item.code)) {
       setArHistory(prev => [...prev, selectedItem]);
     }
     setSelectedItem(item);
     
-    // Check if it's a Custom Item in memory first
-    const customItem = [...nsrItems, ...projectCustomItems].find(i => i.code === item.code);
+    // Check project NS/mDSR items case-insensitively before requesting the master DSR API.
+    const customItem = [...nsrItems, ...projectCustomItems].find(i => normalizeArCode(i.code) === normalizeArCode(item.code));
     if (customItem) {
-      setLoadingAnalysis(false);
-      setAnalysisData(customItem.isExternalAR || Number(customItem.is_external_ar) === 1
-        ? [{ row_type: "NCR", description: `Ext. RA — detailed analysis is maintained outside this software. Final rate: ₹${Number(customItem.rate || 0).toFixed(2)} per ${customItem.unit || "unit"}.` }]
-        : customItem.analysisRows || []);
-      return;
+      const storedRows = Array.isArray(customItem.analysisRows)
+        ? customItem.analysisRows
+        : typeof customItem.analysisRows === "string"
+          ? (() => { try { const parsed = JSON.parse(customItem.analysisRows); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })()
+          : [];
+      if (customItem.isExternalAR || Number(customItem.is_external_ar) === 1) {
+        setLoadingAnalysis(false);
+        setAnalysisData([{ row_type: "NCR", description: `Ext. RA — detailed analysis is maintained outside this software. Final rate: ₹${Number(customItem.rate || 0).toFixed(2)} per ${customItem.unit || "unit"}.` }]);
+        return;
+      }
+      if (storedRows.length) {
+        setLoadingAnalysis(false);
+        setAnalysisData(storedRows);
+        return;
+      }
+      // Some saved project records only carry item metadata in page state; load
+      // their persisted AR from the NSR database endpoint in that case.
     }
 
     setLoadingAnalysis(true);
-    fetch(`/api/rate-analysis?code=${item.code}`)
+    fetch(`/api/rate-analysis?code=${encodeURIComponent(String(item.code))}`)
       .then(res => res.json())
       .then(data => { setAnalysisData(Array.isArray(data) ? data : []); setLoadingAnalysis(false); })
       .catch(() => setLoadingAnalysis(false));
@@ -702,12 +731,7 @@ export default function App() {
     const prevItem = prevItems.pop();
     setArHistory(prevItems);
     if (prevItem) {
-      setSelectedItem(prevItem);
-      setLoadingAnalysis(true);
-      fetch(`/api/rate-analysis?code=${prevItem.code}`)
-        .then(res => res.json())
-        .then(data => { setAnalysisData(Array.isArray(data) ? data : []); setLoadingAnalysis(false); })
-        .catch(() => setLoadingAnalysis(false));
+      handleViewAR(prevItem, true);
     }
   };
 
@@ -744,6 +768,29 @@ export default function App() {
     setEstimateSubTab(subTab);
   };
 
+  const justificationTabs = ["justification", "itemsforjustification", "radsr", "ratelist", "ramarket", "juststatement", "justsummary"];
+  const estimateIsFrozen = Boolean(projectDetails.estimateSnapshot?.locked);
+  const selectJustificationSubTab = (subTab: string) => {
+    if (!estimateIsFrozen) {
+      alert("Freeze the estimate before opening the Justification module.");
+      return;
+    }
+    setJustificationSubTab(subTab);
+    setActiveTab(subTab);
+  };
+
+  useEffect(() => {
+    if (["itemsforjustification", "radsr", "ratelist", "ramarket", "juststatement", "justsummary"].includes(activeTab)) {
+      setJustificationSubTab(activeTab);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (sessionReady && justificationTabs.includes(activeTab) && !estimateIsFrozen) {
+      setActiveTab("estimate");
+    }
+  }, [activeTab, estimateIsFrozen, sessionReady]);
+
   const handleMasterExport = async () => {
     try {
       await exportMasterEstimateToExcel({
@@ -751,6 +798,7 @@ export default function App() {
         rates: estimateRates,
         marketRates,
         projectDetails,
+        rateAnalyses: projectRateAnalyses,
       }, String(projectDetails.estimateId || "Export"));
     } catch (error) {
       console.error("Could not export the master estimate workbook:", error);
@@ -758,14 +806,59 @@ export default function App() {
     }
   };
 
+  const handleMasterPdfExport = async () => {
+    try {
+      await exportMasterEstimateToPdf({
+        estimateRows,
+        rates: estimateRates,
+        marketRates,
+        projectDetails,
+        rateAnalyses: projectRateAnalyses,
+      }, String(projectDetails.estimateId || "Export"), activeProjectDbId);
+    } catch (error) {
+      console.error("Could not export the master estimate PDF:", error);
+      alert(error instanceof Error ? error.message : "Could not export the master estimate PDF.");
+    }
+  };
+
+  const setActiveTabWithEstimateGate = (tab: string) => {
+    if (justificationTabs.includes(tab) && !estimateIsFrozen) {
+      alert("Freeze the estimate before opening the Justification module.");
+      return;
+    }
+    setActiveTab(tab);
+  };
+
+  const setEstimateTotalsLock = (locked: boolean) => {
+    const { estimateSnapshot: _currentSnapshot, ...liveProjectDetails } = projectDetails as any;
+    const totals = calculateAbstractTotals(estimateRows, liveProjectDetails, marketRates, estimateRates);
+    setProjectDetails((current: any) => ({
+      ...current,
+      estimateSnapshot: locked
+        ? { locked: true, updatedAt: new Date().toISOString(), totals }
+        : undefined,
+    }));
+  };
+
+  const toggleEstimateFreeze = () => {
+    if (estimateIsFrozen) {
+      setEstimateTotalsLock(false);
+      setActiveTab("estimate");
+      return;
+    }
+    // Freezing always recalculates totals from the current estimate rows and rates.
+    setEstimateTotalsLock(true);
+  };
+
   const renderEstimateBundle = () => (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between bg-slate-900 border-b border-slate-800 px-4 pt-2 gap-2 shrink-0">
-        <div className="flex space-x-2">
-          <button onClick={() => void selectEstimateSubTab("measurement")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'measurement' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📖 Measurement Sheet</button>
-          <button onClick={() => void selectEstimateSubTab("abstract")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'abstract' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📑 Detailed Abstract</button>
-          <button onClick={() => void selectEstimateSubTab("general")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'general' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>💰 General Abstract</button>
-          <button onClick={() => void selectEstimateSubTab("history")} className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors ${estimateSubTab === 'history' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📋 History Sheet</button>
+      <div className="shrink-0 overflow-x-auto border-b border-slate-800 bg-slate-900 px-4 pt-2">
+        <div className="flex min-w-max flex-nowrap items-center gap-2 pb-2">
+        <div className="flex flex-nowrap gap-2">
+          <button onClick={() => void selectEstimateSubTab("measurement")} className={`px-4 py-2 text-sm font-bold rounded-t-lg transition-colors ${estimateSubTab === 'measurement' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📖 Measurement Sheet</button>
+          <button onClick={() => void selectEstimateSubTab("abstract")} className={`px-4 py-2 text-sm font-bold rounded-t-lg transition-colors ${estimateSubTab === 'abstract' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📑 Detailed Abstract</button>
+          <button onClick={() => void selectEstimateSubTab("general")} className={`px-4 py-2 text-sm font-bold rounded-t-lg transition-colors ${estimateSubTab === 'general' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>💰 General Abstract</button>
+          <button onClick={() => void selectEstimateSubTab("history")} className={`px-4 py-2 text-sm font-bold rounded-t-lg transition-colors ${estimateSubTab === 'history' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}>📋 History Sheet</button>
         </div>
         <button
           type="button"
@@ -778,18 +871,73 @@ export default function App() {
           </svg>
           Export Master Estimate to Excel
         </button>
+        <button
+          type="button"
+          onClick={() => void handleMasterPdfExport()}
+          className="mb-1 flex shrink-0 items-center rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-md transition-colors hover:bg-rose-500"
+          title="Export History, estimate summaries, measurement details, and included NS/mDSR rate analyses as one portrait PDF"
+        >
+          📄 Export Master Estimate to PDF
+        </button>
+        <button type="button" onClick={toggleEstimateFreeze} aria-pressed={estimateIsFrozen} className={`shrink-0 rounded px-3 py-2 text-xs font-bold text-white ${estimateIsFrozen ? "bg-amber-700 hover:bg-amber-600" : "bg-amber-600 hover:bg-amber-500"}`} title={estimateIsFrozen ? "Unlock the estimate for editing; Justification access will be disabled" : "Recalculate estimate totals and freeze the estimate; this unlocks the Justification module"}>
+          {estimateIsFrozen ? "🔒 Unfreeze Estimate" : "🔓 Freeze Estimate"}
+        </button>
+        {estimateIsFrozen && <span className="shrink-0 text-xs font-semibold text-amber-300" title={`Frozen ${projectDetails.estimateSnapshot?.updatedAt ? new Date(projectDetails.estimateSnapshot.updatedAt).toLocaleString() : ""}`}>ECPT · ₹{Number(projectDetails.estimateSnapshot?.totals?.baseCombined || 0).toLocaleString("en-IN")}</span>}
+        </div>
       </div>
-      
-      {estimateSubTab === "measurement" && <MeasurementSheet estimateRows={estimateRows} setEstimateRows={setEstimateRows} rates={estimateRates} theme={theme} checkedItems={dbCheckedItems} setCheckedItems={setDbCheckedItems} projectDetails={projectDetails} />}
-      {estimateSubTab === "abstract" && <Abstract estimateRows={estimateRows} setEstimateRows={setEstimateRows} rates={estimateRates} projectDetails={projectDetails} marketRates={marketRates} theme={theme} />}
-      {estimateSubTab === "general" && <GeneralAbstract estimateRows={estimateRows} rates={estimateRates} projectDetails={projectDetails} marketRates={marketRates} theme={theme} />}
-      {estimateSubTab === "history" && <HistorySheet projectId={activeProjectDbId} projectDetails={projectDetails} />}
+      <div inert={estimateIsFrozen || undefined} className={`relative flex min-h-0 flex-1 flex-col overflow-hidden transition-opacity ${estimateIsFrozen ? "opacity-50 grayscale" : ""}`} aria-disabled={estimateIsFrozen}>
+        {estimateIsFrozen && <div className="pointer-events-none absolute right-5 top-4 z-30 rounded border border-amber-500/60 bg-slate-950/90 px-3 py-2 text-xs font-bold text-amber-300 shadow">ESTIMATE FROZEN · VIEW ONLY</div>}
+        {estimateSubTab === "measurement" && <MeasurementSheet estimateRows={estimateRows} setEstimateRows={setEstimateRows} rates={estimateRates} theme={theme} checkedItems={dbCheckedItems} setCheckedItems={setDbCheckedItems} projectDetails={projectDetails} />}
+        {estimateSubTab === "abstract" && <Abstract estimateRows={estimateRows} setEstimateRows={setEstimateRows} rates={estimateRates} projectDetails={projectDetails} marketRates={marketRates} theme={theme} />}
+        {estimateSubTab === "general" && <GeneralAbstract estimateRows={estimateRows} rates={estimateRates} projectDetails={projectDetails} marketRates={marketRates} theme={theme} />}
+        {estimateSubTab === "history" && <HistorySheet projectId={activeProjectDbId} projectDetails={projectDetails} />}
+      </div>
     </div>
   );
 
   const selectedJustificationCodes = new Set(justificationItemCodes);
   const selectedJustificationRows = estimateRows.filter((row: any) => selectedJustificationCodes.has(String(row.itemCode || "").trim()));
+  const handleMasterJustfnExport = async () => {
+    try {
+      await exportMasterJustfnToExcel({
+        estimateData: { estimateRows, rates: estimateRates, marketRates, projectDetails },
+        statementRows: selectedJustificationRows,
+        justifiedRates,
+        baseMarketRates: marketRates,
+        rateListMarketRates: marketRates,
+        summaryInputs: justificationSummaryInputs,
+        analysisSnapshot: projectRateAnalyses,
+        calculationMethod: rateCalculationMethod,
+      }, String(projectDetails.estimateId || "Estimate"));
+    } catch (error) {
+      console.error("Could not export the master Justification workbook:", error);
+      alert(error instanceof Error ? error.message : "Could not export the master Justification workbook.");
+    }
+  };
+  const handleMasterJustfnPdfExport = async () => {
+    const printWindow = openEstimatePdfWindow();
+    try {
+      await exportMasterJustfnToExcel({
+        estimateData: { estimateRows, rates: estimateRates, marketRates, projectDetails },
+        statementRows: selectedJustificationRows,
+        justifiedRates,
+        baseMarketRates: marketRates,
+        rateListMarketRates: marketRates,
+        summaryInputs: justificationSummaryInputs,
+        analysisSnapshot: projectRateAnalyses,
+        calculationMethod: rateCalculationMethod,
+      }, String(projectDetails.estimateId || "Estimate"), "pdf", printWindow);
+    } catch (error) {
+      printWindow?.close();
+      console.error("Could not export the master Justification PDF:", error);
+      alert(error instanceof Error ? error.message : "Could not export the master Justification PDF.");
+    }
+  };
   const startJustification = async () => {
+    if (!estimateIsFrozen) {
+      alert("Freeze the estimate before opening the Justification module.");
+      return;
+    }
     try {
       if (activeProjectDbId && sessionReady) {
         const response = await fetch("/api/project-sessions", {
@@ -813,16 +961,16 @@ export default function App() {
 
   return (
     <PageToolsProvider>
-    <div className="flex flex-col h-screen font-sans overflow-hidden bg-slate-950 text-slate-100 relative">
-      <TopNav activeTab={activeTab} setActiveTab={setActiveTab} onSelectEstimateSubTab={selectEstimateSubTab} theme={theme} setTheme={setTheme} onNewEstimate={() => void handleNewEstimate()} onSaveEstimate={() => void saveEstimateSnapshot()} onSaveAs={() => void handleSaveAs()} onLoadEstimate={() => void handleLoadEstimate()} projectId={activeProjectDbId} autoSaveState={autoSaveState} />
+    <div className="flex flex-col h-screen font-sans overflow-hidden bg-olive-light text-slate-800 dark:bg-slate-950 dark:text-slate-100 relative">
+      <TopNav activeTab={activeTab} setActiveTab={setActiveTabWithEstimateGate} onSelectEstimateSubTab={selectEstimateSubTab} justificationSubTab={justificationSubTab} onSelectJustificationSubTab={selectJustificationSubTab} theme={themePreference} setTheme={setTheme} onNewEstimate={() => void handleNewEstimate()} onSaveEstimate={() => void saveEstimateSnapshot()} onSaveAs={() => void handleSaveAs()} onLoadEstimate={() => void handleLoadEstimate()} projectId={activeProjectDbId} autoSaveState={autoSaveState} />
       {["radsr", "ratelist", "itemsforjustification", "ramarket", "juststatement", "justsummary"].includes(activeTab) && (
-        <JustificationSubNav activeTab={activeTab} setActiveTab={setActiveTab} />
+        <JustificationSubNav activeTab={activeTab} setActiveTab={setActiveTabWithEstimateGate} onExportMasterJustfn={() => void handleMasterJustfnExport()} onExportMasterJustfnPdf={() => void handleMasterJustfnPdfExport()} />
       )}
       
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <main className="flex-1 overflow-hidden relative flex">
           
-          {activeTab === "home" && <div className="flex-1 overflow-auto bg-slate-100 dark:bg-[#0b1121]">
+          {activeTab === "home" && <div className="flex-1 overflow-auto bg-olive-light text-slate-800 dark:bg-[#0b1121] dark:text-slate-100">
             {activeProjectDbId && documentSettingsProjectId !== activeProjectDbId
               ? documentSettingsError
                 ? <div role="alert" className="m-8 rounded border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800">
@@ -842,6 +990,7 @@ export default function App() {
               addAllToMeasurement={addAllToMeasurement} 
               handleViewAR={handleViewAR}
               theme={theme} 
+              projectDetails={projectDetails}
               checkedItems={dbCheckedItems} 
               setCheckedItems={setDbCheckedItems} 
               estimateRows={estimateRows}
@@ -876,9 +1025,9 @@ export default function App() {
 
           {activeTab === "estimate" && renderEstimateBundle()}
           
-          {activeTab === "nsr" && <div className="flex-1 p-8 overflow-y-auto"><CreateNSR rates={[...rates, ...customItemsForProject]} onAddNSR={async (newItem: any) => { await persistNsrItem(newItem); setNsrItems(prev => [newItem, ...prev.filter(item => item.code !== newItem.code)]); setDatabaseSelectedSH(newItem.code.startsWith("50") ? "SH 50: MODIFIED DSR ITEMS (mDSR)" : "SH 51: NON-SCHEDULE ITEMS (NS)"); setActiveTab("database"); }} theme={theme} /></div>}
+          {activeTab === "nsr" && <div className="flex-1 overflow-y-auto bg-olive-light p-8 dark:bg-slate-950"><CreateNSR rates={[...rates, ...customItemsForProject]} existingItemCodes={[...estimateRows.map((row: any) => row.itemCode), ...customItemsForProject.map((item: any) => item.code)]} projectDetails={projectDetails} onAddNSR={async (newItem: any) => { await persistNsrItem(newItem); setNsrItems(prev => [newItem, ...prev.filter(item => item.code !== newItem.code)]); setDatabaseSelectedSH(newItem.code.startsWith("50") ? "SH 50: MODIFIED DSR ITEMS (mDSR)" : "SH 51: NON-SCHEDULE ITEMS (NS)"); setActiveTab("database"); }} theme={theme} /></div>}
           {activeTab === "justification" && <Justification projectDetails={projectDetails} setProjectDetails={setProjectDetails} />}
-          {activeTab === "ratelist" && <RateList theme={theme} projectId={activeProjectDbId} onSaveRates={saveProjectMarketRates} marketRates={marketRates} setMarketRates={setMarketRates} estimateRows={estimateRows} selectedCodes={justificationItemCodes} rates={estimateRates} nsrItems={customItemsForProject} />}
+          {activeTab === "ratelist" && <RateList theme={theme} projectId={activeProjectDbId} projectDetails={projectDetails} setProjectDetails={setProjectDetails} onSaveRates={saveProjectMarketRates} marketRates={marketRates} setMarketRates={setMarketRates} estimateRows={estimateRows} selectedCodes={justificationItemCodes} rates={estimateRates} nsrItems={customItemsForProject} analysisSnapshot={projectRateAnalyses} />}
           {activeTab === "itemsforjustification" && <ItemsForJustification
             estimateRows={estimateRows}
             rates={estimateRates}
@@ -886,18 +1035,18 @@ export default function App() {
             setSelectedCodes={setJustificationItemCodes}
             percentage={justificationThreshold}
             setPercentage={setJustificationThreshold}
-            calculationMethod={rateCalculationMethod}
-            setCalculationMethod={setRateCalculationMethod}
             projectDetails={projectDetails}
             marketRates={marketRates}
             onStartJustification={() => void startJustification()}
           />}
-          {activeTab === "radsr" && <RateAnalysisDSR estimateRows={estimateRows} selectedCodes={justificationItemCodes} rates={estimateRates} marketRates={marketRates} analysisSnapshot={projectRateAnalyses} theme={theme} focusCode={pendingRateFocus?.tab === "radsr" ? pendingRateFocus.code : ""} onFocusHandled={() => setPendingRateFocus(null)} />}
+          {activeTab === "radsr" && <RateAnalysisDSR estimateRows={estimateRows} selectedCodes={justificationItemCodes} rates={estimateRates} marketRates={marketRates} projectDetails={projectDetails} analysisSnapshot={projectRateAnalyses} theme={theme} focusCode={pendingRateFocus?.tab === "radsr" ? pendingRateFocus.code : ""} onFocusHandled={() => setPendingRateFocus(null)} />}
           {(activeTab === "ramarket" || activeTab === "juststatement") && <div className={activeTab === "ramarket" ? "flex-1 min-h-0" : "hidden"}>
-            <RateAnalysisMarket estimateRows={estimateRows} selectedCodes={justificationItemCodes} rates={estimateRates} theme={theme} marketRates={marketRates} projectId={activeProjectDbId} customItems={projectCustomItems} analysisSnapshot={projectRateAnalyses} setJustifiedRates={setJustifiedRates} calculationMethod={rateCalculationMethod} setCalculationMethod={setRateCalculationMethod} focusCode={pendingRateFocus?.tab === "ramarket" ? pendingRateFocus.code : ""} isActive={activeTab === "ramarket"} onFocusHandled={() => setPendingRateFocus(null)} />
+            <RateAnalysisMarket estimateRows={estimateRows} selectedCodes={justificationItemCodes} rates={estimateRates} theme={theme} marketRates={marketRates} projectId={activeProjectDbId} projectDetails={projectDetails} customItems={projectCustomItems} analysisSnapshot={projectRateAnalyses} setJustifiedRates={setJustifiedRates} calculationMethod={rateCalculationMethod} setCalculationMethod={setRateCalculationMethod} focusCode={pendingRateFocus?.tab === "ramarket" ? pendingRateFocus.code : ""} isActive={activeTab === "ramarket"} onFocusHandled={() => setPendingRateFocus(null)} />
           </div>}
-          {activeTab === "juststatement" && <JustificationStatement estimateRows={selectedJustificationRows} baseEstimateRows={estimateRows} rates={estimateRates} theme={theme} marketRates={justifiedRates} baseMarketRates={marketRates} projectDetails={projectDetails} setJustificationPercentage={setJustificationPercentage} onNavigateToRate={navigateToRateAnalysis} />}
-          {activeTab === "justsummary" && <JustificationSummary estimateRows={selectedJustificationRows} baseEstimateRows={estimateRows} theme={theme} marketRates={justifiedRates} baseMarketRates={marketRates} projectDetails={projectDetails} justificationPercentage={justificationPercentage} projectId={activeProjectDbId} summaryInputs={justificationSummaryInputs} onSummaryInputsChange={setJustificationSummaryInputs} />}
+          {activeTab === "juststatement" && <JustificationStatement estimateRows={selectedJustificationRows} baseEstimateRows={estimateRows} rates={estimateRates} theme={theme} marketRates={justifiedRates} baseMarketRates={marketRates} projectDetails={projectDetails} setJustificationPercentage={setJustificationPercentage} onNavigateToRate={navigateToRateAnalysis} analysisSnapshot={projectRateAnalyses} rateCalculationMethod={rateCalculationMethod} />}
+          <div className={activeTab === "justsummary" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+            <JustificationSummary estimateRows={selectedJustificationRows} baseEstimateRows={estimateRows} rates={estimateRates} theme={theme} marketRates={justifiedRates} baseMarketRates={marketRates} projectDetails={projectDetails} justificationPercentage={justificationPercentage} projectId={activeProjectDbId} summaryInputs={justificationSummaryInputs} onSummaryInputsChange={setJustificationSummaryInputs} onExportMasterJustfn={() => void handleMasterJustfnExport()} />
+          </div>
           
         </main>
       </div>
@@ -968,12 +1117,12 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-slate-800/40">
                       {analysisData.map((row: any, i: number) => {
-                        const isNCR = row.row_type === 'NCR';
+                        const rowType = String(row.row_type ?? "").trim().toUpperCase();
+                        const objectType = String(row.type ?? row.calculation_type ?? "").trim().toUpperCase();
+                        const isNCR = rowType === "NCR";
                         const hasAmtNum = row.amount !== null && row.amount !== undefined && row.amount !== '';
                         const hasAmtStr = row.amount_str && row.amount_str.trim() !== '';
                         const descText = row.description || "";
-                        const dUp = descText.toUpperCase();
-
                         if (isNCR) {
                           const numericAmount = Number(row.amount);
                           const amountText = hasAmtStr
@@ -982,30 +1131,37 @@ export default function App() {
                               ? numericAmount.toFixed(2)
                               : "";
                           const mark = analysisMark(row);
-                          const isHeader = ["MATERIAL", "LABOUR", "MACHINERY"].includes(dUp) || dUp.startsWith("DETAILS OF COST");
-                          const isTotal = /^TOTAL\b/.test(dUp);
-                          const isFinalCost = /^(COST OF|COST FOR|SAY\b)/.test(dUp);
-                          const isCharge = /^(ADD|LESS|DEDUCT)\b/.test(dUp);
-                          const isFinancialSummary = Boolean(amountText || mark || isTotal || isFinalCost || isCharge);
-                          const rowStyle = isTotal || isFinalCost ? "bg-emerald-950/50 border-b border-slate-800" : isCharge ? "bg-slate-900/40 border-b border-slate-800/50" : "border-b border-slate-800/50 bg-transparent";
+                          // Use explicit row metadata only; a plain NCR note stays neutral regardless of its wording.
+                          const isTotal = objectType === "TOTAL" || row.isTotal === true || row.is_total === true;
+                          const isFinalCost = ["FINAL COST", "FINAL_COST", "SAY"].includes(objectType) || row.isFinalCost === true || row.is_final_cost === true;
+                          const isCharge = ["CHARGE", "FINANCIAL CHARGE"].includes(objectType) || row.isCharge === true || row.is_charge === true;
+                          const isHeader = ["HEADER", "SECTION"].includes(objectType) || row.isHeader === true || row.is_header === true;
+                          const isFinancialSummary = Boolean(row.isFinancialSummary || row.is_financial_summary || isTotal || isFinalCost || isCharge || mark);
+                          const isPlainNote = isNCR && !mark && !isTotal && !isFinalCost && !isCharge && !isHeader && !row.isFinancialSummary && !row.is_financial_summary;
+                          const isEmphasized = !isPlainNote && (isTotal || isFinalCost || Boolean(mark));
+                          const rowStyle = isEmphasized
+                            ? "bg-emerald-950/50 border-b border-slate-800"
+                            : isCharge && !isPlainNote
+                              ? "bg-slate-900/40 border-b border-slate-800/50"
+                              : "border-b border-slate-800/50 bg-transparent";
                           return (
                             <tr key={i} className={rowStyle}>
                               <td className="p-3 w-28"></td>
                               <td
                                 colSpan={isFinancialSummary ? 4 : undefined}
-                                className={`p-3 text-justify whitespace-normal break-words align-top ${isHeader ? "font-bold uppercase tracking-wider text-slate-200" : isTotal || isFinalCost ? "font-bold text-emerald-200" : isCharge ? "text-slate-300 pl-6" : "text-slate-300"}`}
+                                className={`p-3 text-justify whitespace-normal break-words align-top ${isPlainNote ? "text-slate-400" : isHeader ? "font-bold uppercase tracking-wider text-slate-200" : isEmphasized ? "font-bold text-emerald-200" : isCharge ? "text-slate-300 pl-6" : "text-slate-300"}`}
                               >
                                 {descText}
                               </td>
                               {!isFinancialSummary && <td className="p-3"></td>}
                               {!isFinancialSummary && <td className="p-3"></td>}
                               {!isFinancialSummary && <td className="p-3"></td>}
-                              <td className={`p-3 text-right font-mono ${isTotal || isFinalCost ? "font-bold text-emerald-300" : amountText ? "text-green-400" : ""}`}>{amountText}</td>
+                              <td className={`p-3 text-right font-mono ${isPlainNote ? "text-slate-400" : isEmphasized ? "font-bold text-emerald-300" : isCharge ? "text-slate-300" : amountText ? "text-green-400" : ""}`}>{amountText}</td>
                               <td className="p-3 text-center font-mono font-bold text-blue-300">{mark}</td>
                             </tr>
                           );
                         } else {
-                          const code = row.component_code || "";
+                          const code = String(row.sub_analysis_code ?? row.subAnalysisCode ?? row.component_code ?? row.code ?? "").trim();
                           const unit = row.unit || "";
                           
                           // Confirmed Unit Rate Calculation Logic Using Database Column F (quantity)
@@ -1021,21 +1177,23 @@ export default function App() {
                           else if (hasAmtNum) amt = amtNum.toFixed(2);
                           const mark = analysisMark(row);
 
-                          const linkedRateItem = rates.find((r: any) => r.code === code);
+                          const linkedRateItem = [...rates, ...nsrItems, ...projectCustomItems]
+                            .find((r: any) => normalizeArCode(r.code) === normalizeArCode(code));
                           const subAnalysisFlag = row.is_sub_ar ?? row.isSubAR;
                           const isSubAnalysis = subAnalysisFlag === true
                             || subAnalysisFlag === 1
                             || subAnalysisFlag === "1"
                             || String(subAnalysisFlag).toLowerCase() === "true"
                             || (/^\d+(?:\.\d+)+$/.test(String(code).trim()) && row.row_type !== "NCR" && row.row_type !== "SCR");
-                          const isSubClickable = Boolean(isSubAnalysis && linkedRateItem);
+                          const isSubClickable = Boolean(isSubAnalysis && code);
                            const isExternalSubAR = linkedRateItem?.isExternalAR === true || Number(linkedRateItem?.is_external_ar) === 1;
+                          const subItem = linkedRateItem || { code, description: descText, unit };
 
                           return (
                             <tr key={i} className="hover:bg-slate-900/60 border-b border-slate-800/50 transition-colors">
                               <td className="p-3 w-28 font-mono text-amber-500 font-bold align-top">
                                 {isSubClickable && !isExternalSubAR ? (
-                                  <button onClick={() => handleViewAR(rates.find((r: any) => r.code === code))} className="text-blue-400 hover:text-blue-300 underline underline-offset-2 flex items-center gap-1" title="View Sub-AR">
+                                  <button onClick={() => handleViewAR(subItem)} className="text-blue-400 hover:text-blue-300 underline underline-offset-2 flex items-center gap-1" title="View Sub-AR">
                                     <span>🔍</span> {code}
                                   </button>
                                 ) : (
@@ -1069,7 +1227,9 @@ export default function App() {
           <div className="w-full max-w-7xl max-h-[95vh] flex flex-col rounded-xl overflow-hidden shadow-2xl" onMouseDown={e => e.stopPropagation()}>
             <CreateNSR 
               rates={[...rates, ...nsrItems]} 
+              existingItemCodes={[...estimateRows.map((row: any) => row.itemCode), ...customItemsForProject.map((item: any) => item.code)]}
               initialData={editingNsrItem}
+              projectDetails={projectDetails}
               // ...rest of props
               onClose={() => { setIsNsrModalOpen(false); setEditingNsrItem(null); }}
               onAddNSR={async (newItem: any) => {

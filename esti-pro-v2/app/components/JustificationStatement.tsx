@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from "react";
 import { buildHierarchicalRows, type HierarchicalRow } from "../utils/dsrHierarchy";
-import { calculateAbstractTotals } from "../utils/abstractTotals";
+import { calculateAbstractTotals, resolveEstimateRate } from "../utils/abstractTotals";
 import { usePageTools } from "./PageToolsContext";
-import { exportTableToExcel } from "../utils/exportTableToExcel";
+import { exportJustfnStatementToExcel, exportJustfnStatementToPdf } from "../utils/exportJustfnToExcel";
+import { openEstimatePdfWindow } from "../utils/exportTableToExcel";
 
 type Props = {
   estimateRows?: any[];
@@ -14,6 +15,8 @@ type Props = {
   projectDetails?: Record<string, any>;
   setJustificationPercentage?: (value: number) => void;
   onNavigateToRate?: (tab: "radsr" | "ramarket", code: string) => void;
+  analysisSnapshot?: Record<string, any>;
+  rateCalculationMethod?: string;
 };
 
 const roundWhole = (value: number) => Math.round(value);
@@ -21,14 +24,14 @@ const formatAmount = (value: number) => new Intl.NumberFormat("en-IN", { maximum
 const isNS = (code: string) => /^(?:NSR|51\.)/i.test(code);
 
 export default function JustificationStatement({
-  estimateRows = [], baseEstimateRows = estimateRows, rates = [], theme = "dark", marketRates = {}, baseMarketRates = marketRates, projectDetails = {}, setJustificationPercentage, onNavigateToRate,
+  estimateRows = [], baseEstimateRows = estimateRows, rates = [], theme = "dark", marketRates = {}, baseMarketRates = marketRates, projectDetails = {}, setJustificationPercentage, onNavigateToRate, analysisSnapshot = {}, rateCalculationMethod = "Conventional DSR",
 }: Props) {
   const { registerPageTools } = usePageTools();
   const findContainerRef = useRef<HTMLDivElement>(null);
   const isDark = theme !== "light";
   const borderClass = isDark ? "border-slate-700/70" : "border-gray-300";
-  const headClass = isDark ? "bg-slate-900 text-slate-300" : "bg-slate-100 text-gray-800";
-  const containerClass = theme === "custom" ? "bg-indigo-950 text-indigo-100" : isDark ? "bg-slate-900 text-slate-200" : "bg-white text-gray-900";
+  const headClass = isDark ? "bg-slate-900 text-slate-300" : "bg-olive-light text-slate-800";
+  const containerClass = theme === "custom" ? "bg-indigo-950 text-indigo-100" : isDark ? "bg-slate-900 text-slate-200" : "bg-olive-card text-slate-900";
 
   // Aggregate repeated BOQ/measurement lines first; the shared helper then inserts SH and parent rows.
   const aggregated = new Map<string, any>();
@@ -38,20 +41,36 @@ export default function JustificationStatement({
     if (existing) existing.quantity += Number(row.quantity) || 0;
     else {
       const base = rates.find((rate: any) => String(rate.code).trim() === code);
-      aggregated.set(code, { ...row, itemCode: code, description: base?.description ?? row.description ?? "", unit: row.unit ?? base?.unit ?? "", quantity: Number(row.quantity) || 0, rate: Number(row.rate) || 0 });
+      const isScheduleItem = !isNS(code);
+      const canonicalRate = Number(base?.rate ?? base?.dar_rate ?? base?.dsrRate ?? base?.dsr_rate);
+      aggregated.set(code, {
+        ...row,
+        itemCode: code,
+        description: base?.description ?? row.description ?? "",
+        unit: row.unit ?? base?.unit ?? "",
+        quantity: Number(row.quantity) || 0,
+        // Schedule rates are authoritative in the DSR master. Saved estimate
+        // snapshots can contain stale rates, so only NS items retain their
+        // user-entered project rate here.
+        rate: isScheduleItem && Number.isFinite(canonicalRate)
+          ? canonicalRate
+          : Number(baseMarketRates[code] ?? row.rate) || 0,
+      });
     }
   });
 
   const hierarchy = buildHierarchicalRows([...aggregated.values()], rates);
   let scheduleEstimateTotal = 0;
-  let dsrEstimateTotal = 0;
   let nsEstimateTotal = 0;
   let totalJustified = 0;
 
   const rows = hierarchy.map((row: HierarchicalRow) => {
     if (!row.isItem) return { ...row, estimateRate: 0, justifiedRate: 0, estimateAmount: 0, justifiedAmount: 0 };
     const source = row.sourceRow || row;
-    const estimateRate = Number(source.rate ?? source.estimateRate) || 0;
+    const resolvedRate = resolveEstimateRate({ itemCode: row.itemCode, rate: source.rate ?? source.estimateRate }, rates);
+    const estimateRate = isNS(String(row.itemCode))
+      ? Number(baseMarketRates[String(row.itemCode)] ?? resolvedRate) || 0
+      : resolvedRate;
     const quantity = Number(source.quantity) || 0;
     const code = String(row.itemCode);
     const justifiedRate = isNS(code) ? estimateRate : marketRates[code] !== undefined ? Number(marketRates[code]) || 0 : estimateRate;
@@ -61,7 +80,6 @@ export default function JustificationStatement({
     if (isNS(code)) nsEstimateTotal += estimateAmount;
     else {
       scheduleEstimateTotal += estimateAmount;
-      if (!/^50(?:\.|$)/.test(code)) dsrEstimateTotal += estimateAmount;
     }
     totalJustified += justifiedAmount;
     return { ...row, quantity, unit: source.unit ?? row.unit ?? "", estimateRate, justifiedRate, estimateAmount, justifiedAmount };
@@ -70,11 +88,12 @@ export default function JustificationStatement({
   const costIndex = Number(projectDetails.costIndex ?? 15) || 0;
   const factorValue = Number(projectDetails.gstModificationFactor ?? 0.973);
   const multiplier = Number.isFinite(factorValue) ? factorValue : 0.973;
-  const costIndexAmount = roundWhole(dsrEstimateTotal * costIndex / 100);
+  // The cost index applies to all scheduled items, including both DSR and mDSR.
+  const costIndexAmount = roundWhole(scheduleEstimateTotal * costIndex / 100);
   const scheduleWithCostIndex = scheduleEstimateTotal + costIndexAmount;
   const modifiedScheduleCost = roundWhole(scheduleWithCostIndex * multiplier);
   const totalECPT = modifiedScheduleCost + nsEstimateTotal;
-  const baseEstimateTotal = calculateAbstractTotals(baseEstimateRows, projectDetails, baseMarketRates).baseCombined;
+  const baseEstimateTotal = calculateAbstractTotals(baseEstimateRows, projectDetails, baseMarketRates, rates).baseCombined;
   const extrapolatedOverallJustifiedAmount = totalECPT > 0
     ? roundWhole((baseEstimateTotal / totalECPT) * totalJustified)
     : 0;
@@ -90,35 +109,36 @@ export default function JustificationStatement({
 
   useEffect(() => { setJustificationPercentage?.(percentage); }, [percentage, setJustificationPercentage]);
 
-  const exportToCSV = () => {
-    const headers = ["Sl. No.", "Item Code", "Description of Items", "Unit", "Quantity", "Estimate Rate (₹)", "Estimate Amount (₹)", "Justified Rate (₹)", "Justified Amount (₹)"];
-    const data = rows.map((row: any) => [row.serialNo, row.itemCode, row.description, row.isItem ? row.unit : "", row.isItem ? Number(row.quantity).toFixed(2) : "", row.isItem ? Number(row.estimateRate).toFixed(2) : "", row.isItem ? formatAmount(row.estimateAmount) : "", row.isItem ? Number(row.justifiedRate).toFixed(2) : "", row.isItem ? formatAmount(row.justifiedAmount) : ""].map((value) => `"${String(value).replace(/"/g, '""')}"`).join(","));
-    const blob = new Blob([[headers.join(","), ...data].join("\n")], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "Justification_Statement.csv";
-    link.click();
-    URL.revokeObjectURL(link.href);
-  };
-  const exportToCSVRef = useRef(exportToCSV);
-  useEffect(() => {
-    exportToCSVRef.current = exportToCSV;
-  });
+  useEffect(() => registerPageTools("juststatement", { searchContainerRef: findContainerRef }), [registerPageTools]);
 
-  useEffect(() => registerPageTools("juststatement", {
-    searchContainerRef: findContainerRef,
-    exportActions: [{
-      id: "export-justification-xlsx",
-      label: "Export Excel",
-      onClick: () => exportTableToExcel(findContainerRef.current, "Justification Statement", "Justification_Statement"),
-      className: "bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded text-sm font-bold shadow",
-    }, {
-      id: "export-justification-csv",
-      label: "Export CSV",
-      onClick: () => exportToCSVRef.current(),
-      className: "bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded text-sm font-bold shadow",
-    }],
-  }), [registerPageTools]);
+  const exportExcel = () => void exportJustfnStatementToExcel({
+    estimateData: { estimateRows: baseEstimateRows, rates, marketRates: baseMarketRates, projectDetails },
+    statementRows: estimateRows,
+    justifiedRates: marketRates,
+    baseMarketRates,
+    rateListMarketRates: baseMarketRates,
+    summaryInputs: { nitNumber: "", lowestContractor: "", contractorTenderedAmount: "" },
+    analysisSnapshot,
+    calculationMethod: rateCalculationMethod,
+  }, String(projectDetails.estimateId || "Estimate"));
+
+  const exportPdf = () => {
+    const printWindow = openEstimatePdfWindow();
+    if (!printWindow) { alert("Allow pop-ups to export the PDF."); return; }
+    void exportJustfnStatementToPdf({
+    estimateData: { estimateRows: baseEstimateRows, rates, marketRates: baseMarketRates, projectDetails },
+    statementRows: estimateRows,
+    justifiedRates: marketRates,
+    baseMarketRates,
+    rateListMarketRates: baseMarketRates,
+    summaryInputs: { nitNumber: "", lowestContractor: "", contractorTenderedAmount: "" },
+    analysisSnapshot,
+    calculationMethod: rateCalculationMethod,
+    }, String(projectDetails.estimateId || "Estimate"), printWindow).catch(error => {
+      printWindow.close();
+      alert(error instanceof Error ? error.message : "Could not export the Justification Statement PDF.");
+    });
+  };
 
   const summaryClass = isDark ? "bg-slate-950/70" : "bg-gray-50";
   const labelClass = `p-3 text-right font-semibold border-r ${borderClass}`;
@@ -133,10 +153,14 @@ export default function JustificationStatement({
 
   return (
     <div ref={findContainerRef} className={`flex-1 overflow-y-auto px-6 pb-6 pt-0 ${containerClass}`}>
-      <h1 className={`border-b ${borderClass} p-3 text-left text-lg font-bold uppercase tracking-widest ${isDark ? "bg-slate-900 text-blue-400" : "bg-slate-100 text-blue-600"}`}>
-        Justification Statement
-      </h1>
-      <div className={`border rounded-lg shadow-sm ${borderClass} ${isDark ? "bg-[#0b1121]" : "bg-white"}`}>
+      <div className={`mb-3 flex flex-wrap items-center justify-between gap-3 border-b ${borderClass} ${isDark ? "bg-slate-900" : "bg-slate-100"}`}>
+        <h1 className={`p-3 text-left text-lg font-bold uppercase tracking-widest ${isDark ? "text-blue-400" : "text-blue-600"}`}>Justification Statement</h1>
+        <div className="mr-3 flex flex-wrap gap-2">
+          <button type="button" onClick={exportExcel} className="rounded bg-emerald-600 px-3 py-2 text-sm font-bold text-white shadow hover:bg-emerald-500">Export Excel</button>
+          <button type="button" onClick={exportPdf} className="rounded bg-rose-600 px-3 py-2 text-sm font-bold text-white shadow hover:bg-rose-500">Export PDF</button>
+        </div>
+      </div>
+      <div className={`border rounded-lg shadow-sm ${borderClass} ${isDark ? "bg-[#0b1121]" : "bg-olive-card"}`}>
         <table className="w-full text-left text-sm border-collapse">
           <thead className={`sticky top-0 z-10 shadow-md ${headClass}`}>
             <tr className={`border-b-4 ${isDark ? "border-slate-600" : "border-gray-400"}`}>
@@ -144,7 +168,7 @@ export default function JustificationStatement({
               <th className={`p-3 text-center w-20 border-r ${borderClass} ${headClass}`}>Unit</th><th className={`p-3 text-right w-28 border-r ${borderClass} ${headClass}`}>Quantity</th><th className={`p-3 text-right w-32 border-r ${borderClass} ${headClass}`}>Estimate Rate (₹)</th>
               <th className={`p-3 text-right w-36 border-r ${borderClass} ${headClass}`}>Estimate Amount (₹)</th><th className={`p-3 text-right w-32 border-r ${borderClass} ${headClass}`}>Justified Rate (₹)</th><th className={`p-3 text-right w-36 ${headClass}`}>Justified Amount (₹)</th>
           </tr></thead>
-          <tbody className={isDark ? "bg-slate-900" : "bg-white"}>
+          <tbody className={isDark ? "bg-slate-900" : "bg-olive-card"}>
             {rows.length ? rows.map((row: any) => (
               <tr data-find-row key={row.rowKey} className={`border-b ${borderClass} ${row.isSubhead ? (isDark ? "bg-slate-800 font-bold" : "bg-gray-100 font-bold") : isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-50"}`}>
                 <td className={`p-3 text-center align-top font-semibold border-r ${borderClass}`}>{row.serialNo}</td><td className={`p-3 text-center align-top font-mono font-semibold text-blue-400 border-r ${borderClass}`}>{row.itemCode}</td>
@@ -157,15 +181,16 @@ export default function JustificationStatement({
               </tr>
             )) : <tr><td colSpan={9} className="p-10 text-center opacity-60">No items in BOQ. Add items from the Database Explorer.</td></tr>}
             {rows.length > 0 && <>
-              {summaryRow("dsr", "Total of DSR / Schedule items", scheduleEstimateTotal, null, true)}
-              {summaryRow("ci", `Add Cost Index @ ${costIndex}% on DSR items`, costIndexAmount, null)}
+              {summaryRow("dsr", "Total of DSR and mDSR items", scheduleEstimateTotal, null, true)}
+              {summaryRow("ci", `Add Cost Index @ ${costIndex}% on DSR & mDSR items`, costIndexAmount, null)}
               {summaryRow("subtotal", `Subtotal of DSR and mDSR items enhanced by Cost Index ${costIndex}%`, scheduleWithCostIndex, null)}
               {summaryRow("multiplier", `Modified estimated cost after applying multiplier factor ${multiplier} on DSR and mDSR items`, modifiedScheduleCost, null)}
               {summaryRow("ns", "Total of Non-Scheduled items", nsEstimateTotal, null)}
-              {summaryRow("ecpt", "Estimated Cost put to Tender [ECPT]", totalECPT, null, true)}
-              {summaryRow("justified", "Total Justified Amount of all items", null, totalJustified, true)}
-              <tr className={summaryClass}><td colSpan={9} className={`p-3 text-right font-semibold border-t ${borderClass}`}>Overall Justified Amount = ( {formatAmount(baseEstimateTotal)} / {formatAmount(totalECPT)} ) X {formatAmount(totalJustified)} = {formatAmount(extrapolatedOverallJustifiedAmount)}</td></tr>
-              <tr className={summaryClass}><td colSpan={9} className={`p-3 text-right font-semibold border-t ${borderClass}`}>Justified Percentage = (( {formatAmount(extrapolatedOverallJustifiedAmount)} - {formatAmount(baseEstimateTotal)} ) / {formatAmount(baseEstimateTotal)} ) X 100</td></tr>
+              {summaryRow("considered-cost", "Total of Estimated Cost of Items considered for Justificatoin", totalECPT, null, true)}
+              {summaryRow("ecpt", "Estimated cost put to tender [ECPT]", baseEstimateTotal, null, true)}
+              {summaryRow("justified", "Total Justified Amount", null, totalJustified, true)}
+              <tr className={summaryClass}><td colSpan={9} className={`p-3 text-right font-semibold border-t ${borderClass}`}>Total Justified amount on Pro-Rata basis = ( {formatAmount(baseEstimateTotal)} / {formatAmount(totalECPT)} ) X {formatAmount(totalJustified)} = {formatAmount(extrapolatedOverallJustifiedAmount)}</td></tr>
+              <tr className={`${summaryClass} font-bold`}><td colSpan={9} className={`p-3 text-right font-bold border-t ${borderClass}`}>Justified percentage = (( {formatAmount(extrapolatedOverallJustifiedAmount)} - {formatAmount(baseEstimateTotal)} ) / {formatAmount(baseEstimateTotal)} ) X 100 = {percentage.toFixed(2)}%</td></tr>
               <tr className={isDark ? "bg-slate-900 text-blue-400" : "bg-gray-100 text-blue-700"}><td colSpan={9} className={`p-3 text-right text-lg font-bold border-t-2 ${borderClass}`}>{verdict}</td></tr>
             </>}
           </tbody>

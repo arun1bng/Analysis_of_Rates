@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { buildHierarchicalRows } from "../utils/dsrHierarchy";
+import { usePageTools } from "./PageToolsContext";
 
 type EstimateRow = {
   itemCode?: string;
@@ -30,8 +31,6 @@ type Props = {
   setSelectedCodes: (codes: string[]) => void;
   percentage: number;
   setPercentage: (percentage: number) => void;
-  calculationMethod: string;
-  setCalculationMethod: (method: string) => void;
   projectDetails: Record<string, unknown>;
   marketRates: Record<string, number | string | null | undefined>;
   onStartJustification: () => void;
@@ -44,14 +43,16 @@ export default function ItemsForJustification({
   setSelectedCodes,
   percentage,
   setPercentage,
-  calculationMethod,
-  setCalculationMethod,
   projectDetails,
   marketRates,
   onStartJustification,
 }: Props) {
+  const { registerPageTools } = usePageTools();
+  const findContainerRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<"code" | "amount">("amount");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+
+  useEffect(() => registerPageTools("itemsforjustification", { searchContainerRef: findContainerRef }), [registerPageTools]);
 
   const items = useMemo(() => {
     const itemMap = new Map<string, { code: string; description: string; unit: string; quantity: number; rate: number; amount: number }>();
@@ -158,10 +159,10 @@ export default function ItemsForJustification({
     sortKey !== key ? "↕" : sortDirection === "asc" ? "↑" : "↓";
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-[#0b1121] text-slate-100">
+    <div ref={findContainerRef} className="flex-1 min-h-0 overflow-y-auto p-6 bg-[#0b1121] text-slate-100">
       <header className="mb-5 flex flex-wrap items-end justify-between gap-4 border-b border-slate-700 pb-4">
         <div>
-          <h1 className="text-xl font-bold uppercase tracking-wider text-emerald-400">Items for Justification</h1>
+          <h1 className="text-xl font-bold uppercase tracking-wider text-emerald-400">Items for Justfn</h1>
           <p className="mt-1 text-sm text-slate-400">Select the estimate items to include in Market Rate Analysis and the Justification Statement.</p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
@@ -190,19 +191,13 @@ export default function ItemsForJustification({
           <button type="button" onClick={onStartJustification} className="rounded bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-500">
             Start Justification
           </button>
-          <label className="flex flex-col gap-1 text-sm font-semibold text-slate-300">
-            Calculation method
-            <select value={calculationMethod} onChange={event => setCalculationMethod(event.target.value)} className="rounded border border-slate-600 bg-slate-950 px-3 py-2 text-slate-100">
-              <option>Conventional DSR</option>
-              <option>Modified DSR</option>
-              <option>Custom charges</option>
-            </select>
-          </label>
         </div>
       </header>
 
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-300">
-        <span>{selectedCodes.length} selected, Selected amount = ₹{Math.round(selectedTotal).toLocaleString("en-IN")}, %age = ₹{Math.round(selectedTotal).toLocaleString("en-IN")} / ₹{Math.round(totalEstimated).toLocaleString("en-IN")} = {selectedPercentage} %</span>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <span className="rounded-lg border border-blue-400/40 bg-blue-950/70 p-3 text-lg font-bold text-blue-200 shadow-sm">
+          {selectedCodes.length} selected, Selected amount = ₹{Math.round(selectedTotal).toLocaleString("en-IN")}, %age = ₹{Math.round(selectedTotal).toLocaleString("en-IN")} / ₹{Math.round(totalEstimated).toLocaleString("en-IN")} = {selectedPercentage} %
+        </span>
         <div className="flex gap-2">
           <button type="button" onClick={() => setSelectedCodes(items.map(item => item.code))} className="rounded border border-slate-600 px-3 py-1.5 hover:bg-slate-800">Select all</button>
           <button type="button" onClick={() => setSelectedCodes([])} className="rounded border border-slate-600 px-3 py-1.5 hover:bg-slate-800">Clear all</button>
@@ -231,7 +226,7 @@ export default function ItemsForJustification({
           </thead>
           <tbody>
             {items.map(item => (
-              <tr key={item.code} className="border-t border-slate-800 hover:bg-slate-800/50">
+              <tr data-find-row key={item.code} className="border-t border-slate-800 hover:bg-slate-800/50">
                 <td className="p-3 text-center"><input type="checkbox" checked={selectedSet.has(item.code)} onChange={() => toggleItem(item.code)} aria-label={`Include ${item.code} for justification`} /></td>
                 <td className="p-3 font-mono font-semibold text-blue-300">{item.code}</td>
                 <td className="p-3 text-justify">
