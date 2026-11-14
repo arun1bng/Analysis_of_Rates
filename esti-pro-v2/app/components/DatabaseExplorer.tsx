@@ -180,7 +180,7 @@ export default function DatabaseExplorer({
 
   const handleAddCheckedItems = () => {
     const itemsToAdd = safeRates.filter((r: any) => !isSpecialARCode(r.code) && checkedItems.includes(cleanCode(r.code)) && !boqTrack[cleanCode(r.code)] && (isExternalRateItem(r) || Number(r.rate) > 0));
-    addAllToMeasurement(itemsToAdd);
+    if (addAllToMeasurement(itemsToAdd) === false) return;
     
     setCheckedItems((prev: string[]) => prev.filter(c => {
       const r = safeRates.find((x: any) => cleanCode(x.code) === c);

@@ -671,14 +671,25 @@ export default function App() {
   };
 
   const addToMeasurement = (item: any) => {
+    if (projectDetails.estimateSnapshot?.locked) {
+      window.alert("This estimate is frozen. Unfreeze the estimate before adding items to it.");
+      return false;
+    }
+
     setEstimateRows(prev => [...prev, {
       id: crypto.randomUUID(), slNo: prev.length + 1, itemCode: item.code, description: item.description || "", userDescription: "",
       unit: item.unit, rate: item.rate,
       nos: 1, num1: 1, num2: 1, length: "", breadth: "", height: "", coefficient: "", quantity: 1, amount: item.rate
     }]);
+    return true;
   };
 
   const addAllToMeasurement = (itemsToAdd: any[]) => {
+    if (projectDetails.estimateSnapshot?.locked) {
+      window.alert("This estimate is frozen. Unfreeze the estimate before adding items to it.");
+      return false;
+    }
+
     const validItems = itemsToAdd.filter((item: any) => item.isExternalAR === true || Number(item.is_external_ar) === 1 || Number(item.rate) > 0);
     const newRows = validItems.map((item, idx) => ({
       id: crypto.randomUUID(), slNo: estimateRows.length + idx + 1, itemCode: item.code, description: item.description || "", userDescription: "",
@@ -686,6 +697,7 @@ export default function App() {
       nos: 1, num1: 1, num2: 1, length: "", breadth: "", height: "", coefficient: "", quantity: 1, amount: item.rate
     }));
     setEstimateRows(prev => [...prev, ...newRows]);
+    return true;
   };
 
     const normalizeArCode = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase();
